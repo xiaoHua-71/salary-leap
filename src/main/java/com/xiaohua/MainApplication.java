@@ -17,7 +17,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication(exclude = {RedisAutoConfiguration.class})
 @MapperScan("com.xiaohua.mapper")
 @EnableScheduling
-@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
+//@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
 public class MainApplication {
 
     public static void main(String[] args) {

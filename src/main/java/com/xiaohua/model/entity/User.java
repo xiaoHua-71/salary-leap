@@ -1,69 +1,54 @@
 package com.xiaohua.model.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
-import java.io.Serializable;
-import java.util.Date;
 import lombok.Data;
 
+import java.util.Date;
+
 /**
- * 用户
- *
- * @author 小花
- * @from 好好学习
+ * 用户表
+ * @TableName user
  */
-@TableName(value = "user")
+@TableName(value ="user")
 @Data
-public class User implements Serializable {
+public class User {
+    /**
+     * 主键
+     */
+    @TableId(type = IdType.AUTO)
+    private String id;
 
     /**
-     * id
+     * 用户名
      */
-    @TableId(type = IdType.ASSIGN_ID)
-    private Long id;
+    private String username;
 
     /**
-     * 用户账号
+     * 密码（加密存储）
      */
-    private String userAccount;
-
-    /**
-     * 用户密码
-     */
-    private String userPassword;
-
-    /**
-     * 开放平台id
-     */
-    private String unionId;
-
-    /**
-     * 公众号openId
-     */
-    private String mpOpenId;
+    private String password;
 
     /**
      * 用户昵称
      */
-    private String userName;
+    private String nickname;
 
     /**
-     * 用户头像
+     * 用户头像URL
      */
-    private String userAvatar;
+    private String avatar;
 
     /**
-     * 用户简介
-     */
-    private String userProfile;
-
-    /**
-     * 用户角色：user/admin/ban
+     * 用户角色（user/admin）
      */
     private String userRole;
+
+    /**
+     * 当前薪资（单位：元/月）
+     */
+    private Integer salary;
 
     /**
      * 创建时间
@@ -76,11 +61,7 @@ public class User implements Serializable {
     private Date updateTime;
 
     /**
-     * 是否删除
+     * 逻辑删除（0-未删除，1-已删除）
      */
-    @TableLogic
     private Integer isDelete;
-
-    @TableField(exist = false)
-    private static final long serialVersionUID = 1L;
 }

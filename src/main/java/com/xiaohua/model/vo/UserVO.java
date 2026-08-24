@@ -1,47 +1,51 @@
 package com.xiaohua.model.vo;
 
-import java.io.Serializable;
-import java.util.Date;
 import lombok.Data;
 
+import java.io.Serializable;
+import java.time.LocalDateTime;
+
 /**
- * 用户视图（脱敏）
- *
- * @author 小花
- * @from 好好学习
+ * 用户视图对象（脱敏）
  */
 @Data
 public class UserVO implements Serializable {
 
     /**
-     * id
+     * 主键
      */
-    private Long id;
+    private String id;
+
+    /**
+     * 用户名
+     */
+    private String username;
 
     /**
      * 用户昵称
      */
-    private String userName;
+    private String nickname;
 
     /**
-     * 用户头像
+     * 用户头像URL
      */
-    private String userAvatar;
+    private String avatar;
 
     /**
-     * 用户简介
-     */
-    private String userProfile;
-
-    /**
-     * 用户角色：user/admin/ban
+     * 用户角色（user/admin）
      */
     private String userRole;
 
     /**
+     * 当前薪资（单位：元/月）
+     */
+    private Integer salary;
+
+    /**
      * 创建时间
      */
-    private Date createTime;
+    private LocalDateTime createTime;
 
     private static final long serialVersionUID = 1L;
 }
+

@@ -9,14 +9,31 @@ import lombok.Data;
  * @author 小花
  * @from 好好学习
  */
+/**
+ * 用户注册请求体
+ */
 @Data
 public class UserRegisterRequest implements Serializable {
 
     private static final long serialVersionUID = 3191241716373120793L;
 
-    private String userAccount;
+    /**
+     * 用户名
+     */
+    private String username;
 
-    private String userPassword;
+    /**
+     * 用户密码
+     */
+    private String password;
 
+    /**
+     * 确认密码
+     */
     private String checkPassword;
+
+    /**
+     * 用户昵称
+     */
+    private String nickname;
 }
