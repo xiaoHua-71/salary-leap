@@ -1,6 +1,7 @@
 
 package com.xiaohua.service.impl;
 
+import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -8,8 +9,12 @@ import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
+import com.xiaohua.common.ErrorCode;
+import com.xiaohua.constant.CacheKey;
+import com.xiaohua.exception.BusinessException;
 import com.xiaohua.mapper.UserMapper;
 import com.xiaohua.model.dto.user.UserLoginRequest;
 import com.xiaohua.model.dto.user.UserRegisterRequest;
@@ -17,10 +22,16 @@ import com.xiaohua.model.entity.User;
 import com.xiaohua.model.enums.UserRoleEnum;
 import com.xiaohua.model.vo.UserVO;
 import com.xiaohua.service.UserService;
+import com.xiaohua.strategy.RegisterStrategyFactory;
 import com.xiaohua.utils.AvatarUtils;
+import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.mail.MailException;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 
 /**
@@ -40,56 +51,38 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      */
     public static final String USER_LOGIN_STATE = "user_login";
 
+    @Resource
+    private RegisterStrategyFactory registerStrategyFactory;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private JavaMailSender javaMailSender;
+
     @Override
     public String userRegister(UserRegisterRequest userRegisterRequest) {
-        String username = userRegisterRequest.getUsername();
-        String password = userRegisterRequest.getPassword();
-        String checkPassword = userRegisterRequest.getCheckPassword();
-        String nickname = userRegisterRequest.getNickname();
+        String registerType = StrUtil.isBlank(userRegisterRequest.getRegisterType()) ? "password" : userRegisterRequest.getRegisterType();
+        return registerStrategyFactory.getStrategy(registerType).register(userRegisterRequest);
+    }
 
-        // 校验
-        if (StrUtil.hasBlank(username, password, checkPassword)) {
-            throw new RuntimeException("参数为空");
+    @Override
+    public void sendRegisterCode(String email) {
+        if (StrUtil.isBlank(email) || !email.contains("@")) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "邮箱格式不正确");
         }
-        if (username.length() < 4) {
-            throw new RuntimeException("用户名过短");
+        String code = String.valueOf(RandomUtil.randomInt(100000, 999999));
+        stringRedisTemplate.opsForValue().set(CacheKey.EMAIL_CODE.key(email), code, 5, TimeUnit.MINUTES);
+        try {
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setTo(email);
+            message.setSubject("salary-leap 注册验证码");
+            message.setText("您的注册验证码为：" + code + "，5分钟内有效。");
+            javaMailSender.send(message);
+        } catch (MailException e) {
+            // dev 环境未配置 SMTP 时降级为日志输出，生产环境请配置 spring.mail
+            log.warn("邮件发送失败(可能是未配置SMTP)，验证码已写入Redis: email={}, code={}", email, code);
         }
-        if (password.length() < 8 || checkPassword.length() < 8) {
-            throw new RuntimeException("用户密码过短");
-        }
-        if (!password.equals(checkPassword)) {
-            throw new RuntimeException("两次输入的密码不一致");
-        }
-
-        // 检查是否已存在该用户名
-        QueryWrapper<User> queryWrapper = new QueryWrapper<>();
-        queryWrapper.eq("username", username);
-        long count = this.baseMapper.selectCount(queryWrapper);
-        if (count > 0) {
-            throw new RuntimeException("用户名已存在");
-        }
-
-        // 加密密码
-        String encryptPassword = DigestUtil.md5Hex(SALT + password);
-
-        // 插入数据
-        User user = new User();
-        user.setUsername(username);
-        user.setPassword(encryptPassword);
-        user.setNickname(StrUtil.isBlank(nickname) ? username : nickname);
-        user.setUserRole(UserRoleEnum.USER.getValue()); // 默认角色为普通用户
-        user.setSalary(10000); // 默认薪资10000
-
-        boolean saveResult = this.save(user);
-        if (!saveResult) {
-            throw new RuntimeException("注册失败，数据库错误");
-        }
-
-        // 注册成功后设置默认头像（基于用户ID生成固定头像）
-        user.setAvatar(AvatarUtils.getDefaultAvatarByUserId(user.getId()));
-        this.updateById(user);
-
-        return user.getId();
     }
 
     @Override

@@ -36,4 +36,19 @@ public class UserRegisterRequest implements Serializable {
      * 用户昵称
      */
     private String nickname;
+
+    /**
+     * 邮箱（邮箱注册时使用）
+     */
+    private String email;
+
+    /**
+     * 邮箱验证码（邮箱注册时使用）
+     */
+    private String code;
+
+    /**
+     * 注册方式（password / email）
+     */
+    private String registerType;
 }

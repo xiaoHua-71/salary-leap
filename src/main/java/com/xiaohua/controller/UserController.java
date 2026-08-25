@@ -2,6 +2,7 @@ package com.xiaohua.controller;
 
 import com.xiaohua.common.BaseResponse;
 import com.xiaohua.common.ResultUtils;
+import com.xiaohua.model.dto.user.SendCodeRequest;
 import com.xiaohua.model.dto.user.UserLoginRequest;
 import com.xiaohua.model.dto.user.UserRegisterRequest;
 import com.xiaohua.model.entity.User;
@@ -40,6 +41,24 @@ public class UserController {
             return ResultUtils.success(userId);
         } catch (Exception e) {
             log.error("用户注册失败", e);
+            return ResultUtils.error(40000, e.getMessage());
+        }
+    }
+
+    /**
+     * 发送邮箱注册验证码
+     *
+     * @param sendCodeRequest 发送验证码请求体
+     * @return 是否发送成功
+     */
+    @PostMapping("/sendCode")
+    @Operation(summary = "发送邮箱注册验证码")
+    public BaseResponse<Boolean> sendRegisterCode(@RequestBody SendCodeRequest sendCodeRequest) {
+        try {
+            userService.sendRegisterCode(sendCodeRequest.getEmail());
+            return ResultUtils.success(true);
+        } catch (Exception e) {
+            log.error("发送验证码失败", e);
             return ResultUtils.error(40000, e.getMessage());
         }
     }

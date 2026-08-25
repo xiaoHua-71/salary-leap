@@ -25,6 +25,13 @@ public interface UserService extends IService<User> {
     String userRegister(UserRegisterRequest userRegisterRequest);
 
     /**
+     * 发送邮箱注册验证码
+     *
+     * @param email 邮箱
+     */
+    void sendRegisterCode(String email);
+
+    /**
      * 用户登录
      *
      * @param userLoginRequest 用户登录请求体
