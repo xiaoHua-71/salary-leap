@@ -27,7 +27,7 @@ public class EmailRegisterStrategy implements RegisterStrategy {
     private StringRedisTemplate stringRedisTemplate;
 
     @Override
-    public String register(UserRegisterRequest request) {
+    public Long register(UserRegisterRequest request) {
         String email = request.getEmail();
         String code = request.getCode();
         String password = request.getPassword();

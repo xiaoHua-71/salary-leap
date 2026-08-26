@@ -35,9 +35,9 @@ public class UserController {
      */
     @PostMapping("/register")
     @Operation(summary = "用户注册")
-    public BaseResponse<String> userRegister(@RequestBody UserRegisterRequest userRegisterRequest) {
+    public BaseResponse<Long> userRegister(@RequestBody UserRegisterRequest userRegisterRequest) {
         try {
-            String userId = userService.userRegister(userRegisterRequest);
+            Long userId = userService.userRegister(userRegisterRequest);
             return ResultUtils.success(userId);
         } catch (Exception e) {
             log.error("用户注册失败", e);

@@ -4,5 +4,5 @@ import com.xiaohua.model.dto.user.UserRegisterRequest;
 
 public interface RegisterStrategy {
 
-    String register(UserRegisterRequest request);
+    Long register(UserRegisterRequest request);
 }

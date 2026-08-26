@@ -26,7 +26,7 @@ public class PasswordRegisterStrategy implements RegisterStrategy {
     private UserMapper userMapper;
 
     @Override
-    public String register(UserRegisterRequest request) {
+    public Long register(UserRegisterRequest request) {
         String username = request.getUsername();
         String password = request.getPassword();
         String checkPassword = request.getCheckPassword();

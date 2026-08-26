@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
+import java.io.Serializable;
 import java.util.Date;
 
 /**
@@ -13,12 +14,12 @@ import java.util.Date;
  */
 @TableName(value ="user")
 @Data
-public class User {
+public class User implements Serializable {
     /**
      * 主键
      */
     @TableId(type = IdType.AUTO)
-    private String id;
+    private Long id;
 
     /**
      * 用户名
@@ -69,4 +70,6 @@ public class User {
      * 逻辑删除（0-未删除，1-已删除）
      */
     private Integer isDelete;
+
+    private static final long serialVersionUID = 1L;
 }

@@ -35,11 +35,11 @@ public class AvatarUtils {
      * @param userId 用户ID
      * @return 默认头像URL
      */
-    public static String getDefaultAvatarByUserId(String userId) {
-        if (userId == null || userId.isEmpty()) {
+    public static String getDefaultAvatarByUserId(Long userId) {
+        if (userId == null) {
             return getRandomDefaultAvatar();
         }
-        
+
         // 使用用户ID的哈希值来确保相同用户ID总是得到相同的头像
         int hash = Math.abs(userId.hashCode());
         int index = hash % DEFAULT_AVATARS.length;

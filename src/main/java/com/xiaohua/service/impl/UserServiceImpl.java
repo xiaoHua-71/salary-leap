@@ -61,7 +61,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private JavaMailSender javaMailSender;
 
     @Override
-    public String userRegister(UserRegisterRequest userRegisterRequest) {
+    public Long userRegister(UserRegisterRequest userRegisterRequest) {
         String registerType = StrUtil.isBlank(userRegisterRequest.getRegisterType()) ? "password" : userRegisterRequest.getRegisterType();
         return registerStrategyFactory.getStrategy(registerType).register(userRegisterRequest);
     }
@@ -131,7 +131,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
 
         // 从数据库查询（追求性能的话可以注释，直接走缓存）
-        String userId = currentUser.getId();
+        Long userId = currentUser.getId();
         currentUser = this.getById(userId);
         if (currentUser == null) {
             throw new RuntimeException("未登录");
@@ -166,8 +166,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
-    public boolean updateUserSalary(String userId, int salaryChange) {
-        if (StrUtil.isBlank(userId)) {
+    public boolean updateUserSalary(Long userId, int salaryChange) {
+        if (userId == null) {
             return false;
         }
 

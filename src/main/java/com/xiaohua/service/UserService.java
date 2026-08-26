@@ -22,7 +22,7 @@ public interface UserService extends IService<User> {
      * @param userRegisterRequest 用户注册请求体
      * @return 新用户 id
      */
-    String userRegister(UserRegisterRequest userRegisterRequest);
+    Long userRegister(UserRegisterRequest userRegisterRequest);
 
     /**
      * 发送邮箱注册验证码
@@ -70,7 +70,7 @@ public interface UserService extends IService<User> {
      * @param salaryChange 薪资变化
      * @return 是否成功
      */
-    boolean updateUserSalary(String userId, int salaryChange);
+    boolean updateUserSalary(Long userId, int salaryChange);
 
     /**
      * 判断用户是否为管理员
