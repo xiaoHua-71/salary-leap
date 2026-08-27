@@ -1,6 +1,7 @@
 package com.xiaohua.controller;
 
 import com.xiaohua.common.BaseResponse;
+import com.xiaohua.common.ErrorCode;
 import com.xiaohua.common.ResultUtils;
 import com.xiaohua.model.dto.user.SendCodeRequest;
 import com.xiaohua.model.dto.user.UserLoginRequest;
@@ -41,7 +42,7 @@ public class UserController {
             return ResultUtils.success(userId);
         } catch (Exception e) {
             log.error("用户注册失败", e);
-            return ResultUtils.error(40000, e.getMessage());
+            return ResultUtils.error(ErrorCode.PARAMS_ERROR, e.getMessage());
         }
     }
 
@@ -59,7 +60,7 @@ public class UserController {
             return ResultUtils.success(true);
         } catch (Exception e) {
             log.error("发送验证码失败", e);
-            return ResultUtils.error(40000, e.getMessage());
+            return ResultUtils.error(ErrorCode.PARAMS_ERROR, e.getMessage());
         }
     }
 
@@ -78,7 +79,7 @@ public class UserController {
             return ResultUtils.success(userVO);
         } catch (Exception e) {
             log.error("用户登录失败", e);
-            return ResultUtils.error(40000, e.getMessage());
+            return ResultUtils.error(ErrorCode.PARAMS_ERROR, e.getMessage());
         }
     }
 
@@ -97,7 +98,7 @@ public class UserController {
             return ResultUtils.success(userVO);
         } catch (Exception e) {
             log.error("获取当前用户失败", e);
-            return ResultUtils.error(40100, e.getMessage());
+            return ResultUtils.error(ErrorCode.NOT_LOGIN_ERROR, e.getMessage());
         }
     }
 
@@ -115,8 +116,7 @@ public class UserController {
             return ResultUtils.success(result);
         } catch (Exception e) {
             log.error("用户注销失败", e);
-            return ResultUtils.error(40000, e.getMessage());
+            return ResultUtils.error(ErrorCode.PARAMS_ERROR, e.getMessage());
         }
     }
 }
-

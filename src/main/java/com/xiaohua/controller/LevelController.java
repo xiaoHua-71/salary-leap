@@ -1,6 +1,7 @@
 package com.xiaohua.controller;
 
 import com.xiaohua.common.BaseResponse;
+import com.xiaohua.common.ErrorCode;
 import com.xiaohua.common.ResultUtils;
 import com.xiaohua.model.vo.LevelVO;
 import com.xiaohua.service.LevelService;
@@ -32,7 +33,7 @@ public class LevelController {
             return ResultUtils.success(vo);
         } catch (Exception e) {
             log.error("生成关卡失败", e);
-            return ResultUtils.error(50000, e.getMessage());
+            return ResultUtils.error(ErrorCode.SYSTEM_ERROR, e.getMessage());
         }
     }
 }
