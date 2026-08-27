@@ -3,14 +3,11 @@ package com.xiaohua.service.impl;
 
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
-import cn.hutool.crypto.digest.DigestUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 
-import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.IntStream;
 
 import com.xiaohua.common.ErrorCode;
 import com.xiaohua.constant.CacheKey;
@@ -32,6 +29,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 /**
@@ -42,17 +40,15 @@ import org.springframework.stereotype.Service;
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
 
     /**
-     * 盐值，混淆密码
-     */
-    public static final String SALT = "xiaoHua";
-
-    /**
      * 用户登录态键
      */
     public static final String USER_LOGIN_STATE = "user_login";
 
     @Resource
     private RegisterStrategyFactory registerStrategyFactory;
+
+    @Resource
+    private PasswordEncoder passwordEncoder;
 
     @Resource
     private StringRedisTemplate stringRedisTemplate;
@@ -101,17 +97,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             throw new RuntimeException("密码错误");
         }
 
-        // 加密
-        String encryptPassword = DigestUtil.md5Hex(SALT + password);
-
         // 查询用户是否存在
-        QueryWrapper<User> queryWrapper = new QueryWrapper<>();
-        queryWrapper.eq("username", username);
-        queryWrapper.eq("password", encryptPassword);
-        User user = this.baseMapper.selectOne(queryWrapper);
+        User user = this.baseMapper.selectOne(new QueryWrapper<User>().eq("username", username));
 
-        // 用户不存在
-        if (user == null) {
+        // 用户不存在或密码不匹配
+        if (user == null || !passwordEncoder.matches(password, user.getPassword())) {
             log.info("user login failed, username cannot match password");
             throw new RuntimeException("用户不存在或密码错误");
         }

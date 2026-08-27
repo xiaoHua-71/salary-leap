@@ -1,6 +1,5 @@
 package com.xiaohua.strategy.impl;
 
-import cn.hutool.crypto.digest.DigestUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.xiaohua.common.ErrorCode;
 import com.xiaohua.exception.BusinessException;
@@ -8,11 +7,11 @@ import com.xiaohua.mapper.UserMapper;
 import com.xiaohua.model.dto.user.UserRegisterRequest;
 import com.xiaohua.model.entity.User;
 import com.xiaohua.model.enums.UserRoleEnum;
-import com.xiaohua.service.impl.UserServiceImpl;
 import com.xiaohua.strategy.RegisterStrategy;
 import com.xiaohua.utils.AvatarUtils;
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.util.regex.Pattern;
@@ -24,6 +23,9 @@ public class PasswordRegisterStrategy implements RegisterStrategy {
 
     @Resource
     private UserMapper userMapper;
+
+    @Resource
+    private PasswordEncoder passwordEncoder;
 
     @Override
     public Long register(UserRegisterRequest request) {
@@ -55,7 +57,7 @@ public class PasswordRegisterStrategy implements RegisterStrategy {
 
         User user = new User();
         user.setUsername(username);
-        user.setPassword(DigestUtil.md5Hex(UserServiceImpl.SALT + password));
+        user.setPassword(passwordEncoder.encode(password));
         user.setNickname(StringUtils.isBlank(nickname) ? username : nickname);
         user.setUserRole(UserRoleEnum.USER.getValue());
         user.setSalary(10000);
