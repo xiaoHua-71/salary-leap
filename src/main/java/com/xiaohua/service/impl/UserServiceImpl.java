@@ -7,6 +7,8 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import com.xiaohua.common.ErrorCode;
@@ -17,6 +19,7 @@ import com.xiaohua.model.dto.user.UserLoginRequest;
 import com.xiaohua.model.dto.user.UserRegisterRequest;
 import com.xiaohua.model.entity.User;
 import com.xiaohua.model.enums.UserRoleEnum;
+import com.xiaohua.model.vo.RankVO;
 import com.xiaohua.model.vo.UserVO;
 import com.xiaohua.service.UserService;
 import com.xiaohua.strategy.RegisterStrategyFactory;
@@ -177,6 +180,27 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         updateWrapper.set("salary", newSalary);
 
         return this.update(updateWrapper);
+    }
+
+    @Override
+    public List<RankVO> getRankList() {
+        QueryWrapper<User> queryWrapper = new QueryWrapper<>();
+        queryWrapper.orderByDesc("salary");
+        List<User> userList = this.list(queryWrapper);
+
+        List<RankVO> rankList = new ArrayList<>(userList.size());
+        for (int i = 0; i < userList.size(); i++) {
+            User user = userList.get(i);
+            RankVO rankVO = new RankVO();
+            rankVO.setRank(i + 1);
+            rankVO.setId(user.getId());
+            rankVO.setUsername(user.getUsername());
+            rankVO.setNickname(user.getNickname());
+            rankVO.setAvatar(user.getAvatar());
+            rankVO.setSalary(user.getSalary());
+            rankList.add(rankVO);
+        }
+        return rankList;
     }
 
     @Override

@@ -8,6 +8,7 @@ import java.util.List;
 import com.xiaohua.model.dto.user.UserLoginRequest;
 import com.xiaohua.model.dto.user.UserRegisterRequest;
 import com.xiaohua.model.entity.User;
+import com.xiaohua.model.vo.RankVO;
 import com.xiaohua.model.vo.UserVO;
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -71,6 +72,13 @@ public interface UserService extends IService<User> {
      * @return 是否成功
      */
     boolean updateUserSalary(Long userId, int salaryChange);
+
+    /**
+     * 获取排行榜（按薪资降序）
+     *
+     * @return 排行榜列表
+     */
+    List<RankVO> getRankList();
 
     /**
      * 判断用户是否为管理员
