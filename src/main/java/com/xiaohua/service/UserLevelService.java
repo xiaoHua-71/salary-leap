@@ -2,6 +2,10 @@ package com.xiaohua.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.xiaohua.model.entity.UserLevel;
+import com.xiaohua.model.vo.AnswerSummaryVO;
+import com.xiaohua.model.vo.UserLevelVO;
+
+import java.util.List;
 
 /**
 * @author qq
@@ -10,4 +14,19 @@ import com.xiaohua.model.entity.UserLevel;
 */
 public interface UserLevelService extends IService<UserLevel> {
 
+    /**
+     * 获取用户答题统计概览
+     *
+     * @param userId 用户 id
+     * @return 统计概览
+     */
+    AnswerSummaryVO getAnswerSummary(Long userId);
+
+    /**
+     * 获取用户历史答题记录（按作答时间倒序）
+     *
+     * @param userId 用户 id
+     * @return 历史记录列表
+     */
+    List<UserLevelVO> listUserLevels(Long userId);
 }
