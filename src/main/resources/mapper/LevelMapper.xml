@@ -24,4 +24,29 @@
         direction,priority,createTime,
         updateTime,isDelete
     </sql>
+
+    <resultMap id="HotLevelResultMap" type="com.xiaohua.model.vo.HotLevelVO">
+        <id property="id" column="id" jdbcType="BIGINT"/>
+        <result property="levelName" column="levelName" jdbcType="VARCHAR"/>
+        <result property="levelDesc" column="levelDesc" jdbcType="VARCHAR"/>
+        <result property="difficulty" column="difficulty" jdbcType="VARCHAR"/>
+        <result property="targetSalary" column="targetSalary" jdbcType="INTEGER"/>
+        <result property="direction" column="direction" jdbcType="VARCHAR"/>
+        <result property="priority" column="priority" jdbcType="INTEGER"/>
+        <result property="playCount" column="playCount" jdbcType="INTEGER"/>
+    </resultMap>
+
+    <select id="selectHotLevels" resultMap="HotLevelResultMap">
+        SELECT l.id, l.levelName, l.levelDesc, l.difficulty, l.targetSalary,
+               l.direction, l.priority,
+               (SELECT COUNT(*) FROM user_level ul
+                 WHERE ul.levelId = l.id AND ul.isDelete = 0) AS playCount
+        FROM level l
+        WHERE l.isDelete = 0
+        <if test="direction != null and direction != ''">
+            AND l.direction = #{direction}
+        </if>
+        ORDER BY playCount DESC, l.priority DESC, l.id DESC
+        LIMIT #{limit}
+    </select>
 </mapper>

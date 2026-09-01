@@ -3,9 +3,12 @@ package com.xiaohua.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.xiaohua.model.dto.level.LevelSubmitRequest;
 import com.xiaohua.model.entity.Level;
+import com.xiaohua.model.vo.HotLevelVO;
 import com.xiaohua.model.vo.LevelVO;
 import com.xiaohua.model.vo.ReportVO;
 import jakarta.servlet.http.HttpServletRequest;
+
+import java.util.List;
 
 /**
  * 关卡服务
@@ -28,4 +31,21 @@ public interface LevelService extends IService<Level> {
      * @return 报告视图
      */
     ReportVO submitLevel(LevelSubmitRequest submitRequest, HttpServletRequest request);
+
+    /**
+     * 查询人气关卡列表（按作答次数降序）
+     *
+     * @param limit     返回数量
+     * @param direction 学习方向（可空）
+     * @return 人气关卡列表
+     */
+    List<HotLevelVO> listHotLevels(int limit, String direction);
+
+    /**
+     * 获取关卡详情（选项不含答案）
+     *
+     * @param levelId 关卡 id
+     * @return 关卡视图
+     */
+    LevelVO getLevelDetail(Long levelId);
 }

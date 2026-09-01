@@ -15,6 +15,7 @@ import com.xiaohua.model.dto.level.LevelSubmitRequest;
 import com.xiaohua.model.entity.Level;
 import com.xiaohua.model.entity.User;
 import com.xiaohua.model.entity.UserLevel;
+import com.xiaohua.model.vo.HotLevelVO;
 import com.xiaohua.model.vo.LevelVO;
 import com.xiaohua.model.vo.ReportVO;
 import com.xiaohua.service.LevelService;
@@ -73,17 +74,8 @@ public class LevelServiceImpl extends ServiceImpl<LevelMapper, Level> implements
         level.setTargetSalary(result.getTargetSalary());
         this.save(level);
 
-        LevelVO vo = new LevelVO();
-        vo.setId(level.getId());
-        vo.setLevelName(level.getLevelName());
-        vo.setLevelDesc(level.getLevelDesc());
-        List<String> optionNames = result.getOptions().stream()
-                .map(LevelOption::getOptionName)
-                .collect(Collectors.toList());
-        vo.setOptions(optionNames);
-        vo.setDifficulty(level.getDifficulty());
-        vo.setTargetSalary(level.getTargetSalary());
-        return vo;
+        return buildLevelVO(level.getId(), level.getLevelName(), level.getLevelDesc(),
+                result.getOptions(), level.getDifficulty(), level.getTargetSalary());
     }
 
     @Override
@@ -160,6 +152,44 @@ public class LevelServiceImpl extends ServiceImpl<LevelMapper, Level> implements
         vo.setTrueOptions(trueOptions);
         vo.setStandardAnswer(report.getStandardAnswer());
         vo.setNewSalary(newSalary);
+        return vo;
+    }
+
+    @Override
+    public List<HotLevelVO> listHotLevels(int limit, String direction) {
+        int safeLimit = Math.max(1, Math.min(limit, 50));
+        return baseMapper.selectHotLevels(safeLimit, direction);
+    }
+
+    @Override
+    public LevelVO getLevelDetail(Long levelId) {
+        Level level = this.getById(levelId);
+        if (level == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "关卡不存在");
+        }
+        List<LevelOption> levelOptions;
+        try {
+            levelOptions = objectMapper.readValue(level.getOptions(), new TypeReference<List<LevelOption>>() {
+            });
+        } catch (JsonProcessingException e) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "关卡选项解析失败");
+        }
+        return buildLevelVO(level.getId(), level.getLevelName(), level.getLevelDesc(),
+                levelOptions, level.getDifficulty(), level.getTargetSalary());
+    }
+
+    private LevelVO buildLevelVO(Long id, String levelName, String levelDesc,
+                                 List<LevelOption> options, String difficulty, Integer targetSalary) {
+        LevelVO vo = new LevelVO();
+        vo.setId(id);
+        vo.setLevelName(levelName);
+        vo.setLevelDesc(levelDesc);
+        List<String> optionNames = options.stream()
+                .map(LevelOption::getOptionName)
+                .collect(Collectors.toList());
+        vo.setOptions(optionNames);
+        vo.setDifficulty(difficulty);
+        vo.setTargetSalary(targetSalary);
         return vo;
     }
 }
