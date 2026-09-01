@@ -97,9 +97,13 @@ springdoc:
 knife4j:
   enable: true
 # LangChain4j 通义千问（阿里云百炼）配置
+# base-url 为专属实例（独占部署）的 DashScope 原生地址，默认走 https://dashscope.aliyuncs.com/api/v1
 langchain4j:
   community:
     dashscope:
       chat-model:
-        api-key: sk-your-api-key-placeholder
-        model-name: qwen-plus
+        api-key: sk-ws-H.EXHXRPY.mcFW.MEUCIQDjeT8C1kKL3Av_5oUXXlKNshCWybAbSx5xb91B5_KCgAIgQHyaP_KORG3XWwcsb8Ur4LdU6ixR2JQlnao6i7f6w4g
+        base-url: https://ws-xupotu1vk2yorol6.cn-beijing.maas.aliyuncs.com/api/v1
+        model-name: qwen3.7-max
+
+
