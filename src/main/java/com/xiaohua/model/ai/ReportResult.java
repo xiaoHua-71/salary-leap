@@ -21,11 +21,6 @@ public class ReportResult {
     private String comment;
 
     /**
-     * 薪资调整（正数加薪，负数减薪）
-     */
-    private Integer salaryChange;
-
-    /**
      * 投递公司建议
      */
     private String suggest;

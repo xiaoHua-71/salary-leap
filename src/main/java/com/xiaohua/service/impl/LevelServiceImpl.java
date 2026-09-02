@@ -123,8 +123,8 @@ public class LevelServiceImpl extends ServiceImpl<LevelMapper, Level> implements
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AI 生成报告失败");
         }
 
-        // 更新用户薪资（不低于 0）
-        int salaryChange = report.getSalaryChange() == null ? 0 : report.getSalaryChange();
+        // 薪资变化由分数确定性计算，避免与文字评价脱钩
+        int salaryChange = calcSalaryChange(report.getScore(), salary);
         int newSalary = Math.max(0, salary + salaryChange);
         userService.updateUserSalary(user.getId(), salaryChange);
 
@@ -176,6 +176,22 @@ public class LevelServiceImpl extends ServiceImpl<LevelMapper, Level> implements
         }
         return buildLevelVO(level.getId(), level.getLevelName(), level.getLevelDesc(),
                 levelOptions, level.getDifficulty(), level.getTargetSalary());
+    }
+
+    private int calcSalaryChange(int score, int currentSalary) {
+        if (score >= 90) {
+            return Math.round(currentSalary * 0.10f);
+        }
+        if (score >= 75) {
+            return Math.round(currentSalary * 0.05f);
+        }
+        if (score >= 60) {
+            return 0;
+        }
+        if (score >= 40) {
+            return -Math.round(currentSalary * 0.05f);
+        }
+        return -Math.round(currentSalary * 0.10f);
     }
 
     private LevelVO buildLevelVO(Long id, String levelName, String levelDesc,
