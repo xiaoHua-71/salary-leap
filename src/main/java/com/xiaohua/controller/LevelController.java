@@ -34,11 +34,15 @@ public class LevelController {
 
     /**
      * 生成关卡（测试用，后续改为根据登录用户薪资生成）
+     *
+     * @param salary    当前薪资
+     * @param direction 学习方向（可空，用于 RAG 检索知识库）
      */
     @PostMapping("/generate")
-    public BaseResponse<LevelVO> generateLevel(@RequestParam(defaultValue = "10000") int salary) {
+    public BaseResponse<LevelVO> generateLevel(@RequestParam(defaultValue = "10000") int salary,
+                                               @RequestParam(required = false) String direction) {
         try {
-            LevelVO vo = levelService.generateLevel(salary);
+            LevelVO vo = levelService.generateLevel(salary, direction);
             return ResultUtils.success(vo);
         } catch (Exception e) {
             log.error("生成关卡失败", e);

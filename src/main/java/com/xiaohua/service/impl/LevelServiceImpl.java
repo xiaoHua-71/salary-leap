@@ -18,6 +18,7 @@ import com.xiaohua.model.entity.UserLevel;
 import com.xiaohua.model.vo.HotLevelVO;
 import com.xiaohua.model.vo.LevelVO;
 import com.xiaohua.model.vo.ReportVO;
+import com.xiaohua.service.KnowledgeService;
 import com.xiaohua.service.LevelService;
 import com.xiaohua.service.UserLevelService;
 import com.xiaohua.service.UserService;
@@ -51,9 +52,17 @@ public class LevelServiceImpl extends ServiceImpl<LevelMapper, Level> implements
     @Resource
     private ObjectMapper objectMapper;
 
+    @Resource
+    private KnowledgeService knowledgeService;
+
     @Override
-    public LevelVO generateLevel(int salary) {
-        LevelResult result = levelAiService.generateLevel(salary);
+    public LevelVO generateLevel(int salary, String direction) {
+        String directionText = StrUtil.isBlank(direction) ? "Java后端开发" : direction;
+
+        // RAG：先按方向从知识库检索相关知识，再让模型照着知识出题
+        String knowledge = knowledgeService.retrieve(directionText);
+
+        LevelResult result = levelAiService.generateLevel(salary, directionText, knowledge);
         if (result == null || StrUtil.isBlank(result.getLevelName())
                 || result.getOptions() == null || result.getOptions().isEmpty()) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AI 生成关卡失败");
@@ -72,6 +81,7 @@ public class LevelServiceImpl extends ServiceImpl<LevelMapper, Level> implements
         level.setOptions(optionsJson);
         level.setDifficulty(result.getDifficulty());
         level.setTargetSalary(result.getTargetSalary());
+        level.setDirection(directionText);
         this.save(level);
 
         return buildLevelVO(level.getId(), level.getLevelName(), level.getLevelDesc(),

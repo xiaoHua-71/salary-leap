@@ -12,6 +12,14 @@ import dev.langchain4j.service.V;
 public interface LevelAiService {
 
     @SystemMessage(AiPrompt.GENERATE_LEVEL_SYSTEM)
-    @UserMessage("当前薪资：{{salary}}")
-    LevelResult generateLevel(@V("salary") int salary);
+    @UserMessage("""
+            当前薪资：{{salary}}
+            学习方向：{{direction}}
+
+            ## 请优先参考下面检索到的知识出题，不要超出这些知识的范围编造内容
+            {{knowledge}}
+            """)
+    LevelResult generateLevel(@V("salary") int salary,
+                              @V("direction") String direction,
+                              @V("knowledge") String knowledge);
 }
