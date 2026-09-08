@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
 public class KnowledgeService {
 
     @Resource
-    private EmbeddingStore<TextSegment> embeddingStore;
+    private RagIndexService ragIndexService;
 
     @Resource
     private QwenEmbeddingModel embeddingModel;
@@ -44,7 +44,8 @@ public class KnowledgeService {
                 .maxResults(3)
                 .minScore(0.2)
                 .build();
-        EmbeddingSearchResult<TextSegment> result = embeddingStore.search(request);
+        EmbeddingStore<TextSegment> store = ragIndexService.getEmbeddingStore();
+        EmbeddingSearchResult<TextSegment> result = store.search(request);
 
         List<EmbeddingMatch<TextSegment>> matches = result.matches();
         if (matches.isEmpty()) {
