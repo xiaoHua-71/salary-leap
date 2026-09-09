@@ -105,5 +105,11 @@ langchain4j:
         api-key: xxx
         base-url: https://ws-xupotu1vk2yorol6.cn-beijing.maas.aliyuncs.com/api/v1
         model-name: qwen3.7-max
+# Milvus 向量库配置（langchain4j-milvus 无 starter，自行用 @Value 读取）
+milvus:
+  host: localhost
+  port: 19530
+  collection-name: level_knowledge
+  dimension: 1536
 
 
