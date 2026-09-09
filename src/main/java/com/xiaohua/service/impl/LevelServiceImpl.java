@@ -196,7 +196,7 @@ public class LevelServiceImpl extends ServiceImpl<LevelMapper, Level> implements
             return Math.round(currentSalary * 0.05f);
         }
         if (score >= 60) {
-            return 0;
+            return Math.round(currentSalary * 0.02f);
         }
         if (score >= 40) {
             return -Math.round(currentSalary * 0.05f);
