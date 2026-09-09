@@ -22,14 +22,18 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 知识库索引服务：负责向量库的生命周期（建库、首次入库、重建）。
+ * 知识库索引服务：管理向量库生命周期（建库、首次入库、重建）。
  *
- * <p>Milvus 是落盘向量库，集合一旦建好就持久化。重建索引时
- * 「删集合 → 重建 → 重新入库」，并把新 store 替换到当前引用上。</p>
+ * <p>集合名带时间戳后缀（如 {@code level_knowledge_1725816000000}），
+ * 每次重建都新建一个集合再切引用，<b>不做同名 drop + 重建</b>，
+ * 从而绕开 Milvus Lite 上删同名集合容易崩溃的问题。</p>
  */
 @Service
 @Slf4j
@@ -44,25 +48,38 @@ public class RagIndexService {
     @Value("${milvus.port:19530}")
     private int port;
 
+    /** 集合名前缀，实际集合名会在后面拼时间戳 */
     @Value("${milvus.collection-name:level_knowledge}")
-    private String collectionName;
+    private String baseCollectionName;
 
     @Value("${milvus.dimension:1536}")
     private int dimension;
 
-    /** 当前生效的向量库，rebuild 时替换引用。volatile 保证替换对其它线程可见。 */
+    /** 记录当前集合名的小文件，重启后据此复用上次的集合 */
+    @Value("${milvus.collection-meta-file:milvus-current-collection.txt}")
+    private String metaFilePath;
+
+    /** 当前生效的集合名 */
+    private volatile String currentCollectionName;
+
+    /** 当前生效的向量库 */
     private volatile MilvusEmbeddingStore embeddingStore;
 
     @PostConstruct
     public void init() {
-        embeddingStore = buildStore();
-        long rowCount = countRows();
-        if (rowCount > 0) {
-            log.info("知识库集合 [{}] 已有 {} 条向量，跳过入库", collectionName, rowCount);
-            return;
+        currentCollectionName = loadCurrentCollectionName();
+        if (currentCollectionName == null || currentCollectionName.isBlank()) {
+            currentCollectionName = newCollectionName();
         }
-        log.info("知识库集合 [{}] 为空，开始首次入库...", collectionName);
-        ingest(embeddingStore);
+        embeddingStore = buildStore(currentCollectionName);
+        long rowCount = countRows(currentCollectionName);
+        if (rowCount > 0) {
+            log.info("集合 [{}] 已有 {} 条向量，跳过入库", currentCollectionName, rowCount);
+        } else {
+            log.info("集合 [{}] 为空，开始入库...", currentCollectionName);
+            ingest(embeddingStore);
+        }
+        saveCurrentCollectionName(currentCollectionName);
     }
 
     /**
@@ -73,21 +90,24 @@ public class RagIndexService {
     }
 
     /**
-     * 重建索引：删集合 → 重建（自动建集合+索引）→ 重新入库 → 替换引用。
+     * 重建索引：新建一个集合 → 入库 → 切引用。旧集合保留，不做同名 drop。
      */
     public synchronized void rebuild() {
         log.info("开始重建索引...");
-        embeddingStore.dropCollection(collectionName);
-        MilvusEmbeddingStore fresh = buildStore();
+        String newName = newCollectionName();
+        MilvusEmbeddingStore fresh = buildStore(newName);
         ingest(fresh);
+        this.currentCollectionName = newName;
         this.embeddingStore = fresh;
-        log.info("重建索引完成");
+        saveCurrentCollectionName(newName);
+        log.info("重建索引完成，新集合 [{}]", newName);
     }
 
-    /**
-     * 建一个 Milvus store。集合不存在时会自动建集合 + 建索引 + load 进内存。
-     */
-    private MilvusEmbeddingStore buildStore() {
+    private String newCollectionName() {
+        return baseCollectionName + "_" + System.currentTimeMillis();
+    }
+
+    private MilvusEmbeddingStore buildStore(String collectionName) {
         return MilvusEmbeddingStore.builder()
                 .host(host)
                 .port(port)
@@ -100,9 +120,6 @@ public class RagIndexService {
                 .build();
     }
 
-    /**
-     * 加载 + 切分知识库文档，向量化后写入指定 store。
-     */
     private void ingest(MilvusEmbeddingStore store) {
         List<TextSegment> segments = loadAndSplit();
         store.addAll(embeddingModel.embedAll(segments).content(), segments);
@@ -122,10 +139,7 @@ public class RagIndexService {
         return segments;
     }
 
-    /**
-     * 查集合的向量条数，集合不存在时返回 0。
-     */
-    private long countRows() {
+    private long countRows(String collectionName) {
         MilvusServiceClient client = new MilvusServiceClient(
                 ConnectParam.newBuilder().withHost(host).withPort(port).build());
         try {
@@ -143,6 +157,26 @@ public class RagIndexService {
                     .orElse(0L);
         } finally {
             client.close();
+        }
+    }
+
+    private String loadCurrentCollectionName() {
+        try {
+            Path p = Paths.get(metaFilePath);
+            if (Files.exists(p)) {
+                return Files.readString(p).trim();
+            }
+        } catch (IOException e) {
+            log.warn("读取集合名元文件失败: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private void saveCurrentCollectionName(String name) {
+        try {
+            Files.writeString(Paths.get(metaFilePath), name);
+        } catch (IOException e) {
+            log.warn("写入集合名元文件失败: {}", e.getMessage());
         }
     }
 
