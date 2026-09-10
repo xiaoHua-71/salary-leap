@@ -36,7 +36,7 @@ public class KnowledgeService {
      */
     public String retrieve(String query) {
         // 1. 把查询也向量化 —— 必须用和知识库同一个模型，才能在同一空间比较相似度
-        Embedding queryEmbedding = embeddingModel.embed(query).content();
+        Embedding queryEmbedding = embeddingModel.embed(query).content();//拿到向量化后的数据
 
         // 2. 在向量库里做相似度检索，取最像的前 3 段
         EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
