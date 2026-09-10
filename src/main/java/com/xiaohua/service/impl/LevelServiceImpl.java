@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xiaohua.common.ErrorCode;
+import com.xiaohua.constant.AiPrompt;
 import com.xiaohua.exception.BusinessException;
 import com.xiaohua.mapper.LevelMapper;
 import com.xiaohua.model.ai.LevelOption;
@@ -26,6 +27,7 @@ import com.xiaohua.service.ai.LevelAiService;
 import com.xiaohua.service.ai.ReportAiService;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -35,6 +37,7 @@ import java.util.stream.Collectors;
  * 关卡服务实现
  */
 @Service
+@Slf4j
 public class LevelServiceImpl extends ServiceImpl<LevelMapper, Level> implements LevelService {
 
     @Resource
@@ -61,6 +64,11 @@ public class LevelServiceImpl extends ServiceImpl<LevelMapper, Level> implements
 
         // RAG：先按方向从知识库检索相关知识，再让模型照着知识出题
         String knowledge = knowledgeService.retrieve(directionText);
+        if (StrUtil.isBlank(knowledge)) {
+            // 兜底降级：没检索到知识（或检索失败），用提示语占位，退回通用知识出题
+            log.info("方向 [{}] 无检索结果，退回纯模型出题", directionText);
+            knowledge = AiPrompt.NO_KNOWLEDGE_FALLBACK;
+        }
 
         LevelResult result = levelAiService.generateLevel(salary, directionText, knowledge);
         if (result == null || StrUtil.isBlank(result.getLevelName())

@@ -6,6 +6,11 @@ package com.xiaohua.constant;
 public class AiPrompt {
 
     /**
+     * 检索为空 / 检索失败时的兜底提示语，让模型退回「通用知识出题」
+     */
+    public static final String NO_KNOWLEDGE_FALLBACK = "（本次未检索到相关知识，请仅根据你的通用知识出题，不要编造具体的技术名词）";
+
+    /**
      * 生成关卡的系统提示词
      */
     public static final String GENERATE_LEVEL_SYSTEM = """

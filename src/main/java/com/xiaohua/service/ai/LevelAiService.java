@@ -16,7 +16,7 @@ public interface LevelAiService {
             当前薪资：{{salary}}
             学习方向：{{direction}}
 
-            ## 请优先参考下面检索到的知识出题，不要超出这些知识的范围编造内容
+            ## 请优先参考下面的知识出题，不要超出这些知识的范围编造内容；若括号内提示「未检索到相关知识」，则改用你的通用知识出题
             {{knowledge}}
             """)
     LevelResult generateLevel(@V("salary") int salary,
