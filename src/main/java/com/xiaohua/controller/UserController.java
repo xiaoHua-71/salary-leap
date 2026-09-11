@@ -3,9 +3,12 @@ package com.xiaohua.controller;
 import com.xiaohua.common.BaseResponse;
 import com.xiaohua.common.ErrorCode;
 import com.xiaohua.common.ResultUtils;
+import com.xiaohua.exception.BusinessException;
 import com.xiaohua.model.dto.user.SendCodeRequest;
 import com.xiaohua.model.dto.user.UserLoginRequest;
+import com.xiaohua.model.dto.user.UserPasswordUpdateRequest;
 import com.xiaohua.model.dto.user.UserRegisterRequest;
+import com.xiaohua.model.dto.user.UserUpdateRequest;
 import com.xiaohua.model.entity.User;
 import com.xiaohua.model.vo.UserVO;
 import com.xiaohua.service.UserService;
@@ -98,6 +101,57 @@ public class UserController {
             return ResultUtils.success(userVO);
         } catch (Exception e) {
             log.error("获取当前用户失败", e);
+            return ResultUtils.error(ErrorCode.NOT_LOGIN_ERROR, e.getMessage());
+        }
+    }
+
+    /**
+     * 更新当前登录用户信息（昵称、头像、方向标签、密码）
+     *
+     * @param userUpdateRequest 更新请求体
+     * @param request           请求对象
+     * @return 更新后的脱敏用户信息
+     */
+    @PostMapping("/update")
+    @Operation(summary = "更新当前登录用户信息")
+    public BaseResponse<UserVO> updateUser(@RequestBody UserUpdateRequest userUpdateRequest, HttpServletRequest request) {
+        if (userUpdateRequest == null) {
+            return ResultUtils.error(ErrorCode.PARAMS_ERROR);
+        }
+        try {
+            UserVO userVO = userService.updateUser(userUpdateRequest, request);
+            return ResultUtils.success(userVO);
+        } catch (BusinessException e) {
+            log.error("更新用户信息失败", e);
+            return ResultUtils.error(e.getCode(), e.getMessage());
+        } catch (Exception e) {
+            log.error("更新用户信息失败", e);
+            return ResultUtils.error(ErrorCode.NOT_LOGIN_ERROR, e.getMessage());
+        }
+    }
+
+    /**
+     * 修改当前登录用户密码（需校验旧密码）
+     *
+     * @param passwordUpdateRequest 修改密码请求体
+     * @param request               请求对象
+     * @return 是否成功
+     */
+    @PostMapping("/updatePassword")
+    @Operation(summary = "修改当前登录用户密码")
+    public BaseResponse<Boolean> updatePassword(@RequestBody UserPasswordUpdateRequest passwordUpdateRequest,
+                                                HttpServletRequest request) {
+        if (passwordUpdateRequest == null) {
+            return ResultUtils.error(ErrorCode.PARAMS_ERROR);
+        }
+        try {
+            boolean result = userService.updatePassword(passwordUpdateRequest, request);
+            return ResultUtils.success(result);
+        } catch (BusinessException e) {
+            log.error("修改密码失败", e);
+            return ResultUtils.error(e.getCode(), e.getMessage());
+        } catch (Exception e) {
+            log.error("修改密码失败", e);
             return ResultUtils.error(ErrorCode.NOT_LOGIN_ERROR, e.getMessage());
         }
     }

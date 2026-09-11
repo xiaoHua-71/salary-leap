@@ -6,7 +6,9 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import java.util.List;
 
 import com.xiaohua.model.dto.user.UserLoginRequest;
+import com.xiaohua.model.dto.user.UserPasswordUpdateRequest;
 import com.xiaohua.model.dto.user.UserRegisterRequest;
+import com.xiaohua.model.dto.user.UserUpdateRequest;
 import com.xiaohua.model.entity.User;
 import com.xiaohua.model.vo.RankVO;
 import com.xiaohua.model.vo.UserVO;
@@ -71,6 +73,24 @@ public interface UserService extends IService<User> {
      * @return 是否成功
      */
     boolean userLogout(HttpServletRequest request);
+
+    /**
+     * 更新当前登录用户自己的信息（昵称、头像、方向标签）
+     *
+     * @param userUpdateRequest 更新请求体
+     * @param request           请求对象
+     * @return 更新后的脱敏用户信息
+     */
+    UserVO updateUser(UserUpdateRequest userUpdateRequest, HttpServletRequest request);
+
+    /**
+     * 修改当前登录用户密码（需校验旧密码）
+     *
+     * @param passwordUpdateRequest 修改密码请求体
+     * @param request               请求对象
+     * @return 是否成功
+     */
+    boolean updatePassword(UserPasswordUpdateRequest passwordUpdateRequest, HttpServletRequest request);
 
     /**
      * 更新用户薪资

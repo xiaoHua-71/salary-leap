@@ -99,6 +99,11 @@
             <artifactId>langchain4j-milvus</artifactId>
             <version>1.4.0-beta10</version>
         </dependency>
+        <!-- 本地缓存（检索结果缓存），版本由 Spring Boot 统一管理 -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
         <!-- Jsoup for web scraping -->
         <dependency>
             <groupId>org.jsoup</groupId>

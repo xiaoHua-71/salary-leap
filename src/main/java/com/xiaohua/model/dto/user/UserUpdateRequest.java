@@ -4,37 +4,25 @@ import java.io.Serializable;
 import lombok.Data;
 
 /**
- * 用户更新请求
- *
- * @author 小花
- * @from 好好学习
+ * 用户更新请求（仅更新当前登录用户自己，不含密码）
  */
 @Data
 public class UserUpdateRequest implements Serializable {
-    /**
-     * id
-     */
-    private Long id;
 
     /**
      * 用户昵称
      */
-    private String userName;
+    private String nickname;
 
     /**
-     * 用户头像
+     * 用户头像URL
      */
-    private String userAvatar;
+    private String avatar;
 
     /**
-     * 简介
+     * 学习方向标签（出题方向，Java后端开发、前端开发、Go开发、Agent开发或自定义）
      */
-    private String userProfile;
-
-    /**
-     * 用户角色：user/admin/ban
-     */
-    private String userRole;
+    private String direction;
 
     private static final long serialVersionUID = 1L;
 }

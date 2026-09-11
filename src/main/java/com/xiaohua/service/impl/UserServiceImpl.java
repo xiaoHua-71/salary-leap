@@ -16,7 +16,9 @@ import com.xiaohua.constant.CacheKey;
 import com.xiaohua.exception.BusinessException;
 import com.xiaohua.mapper.UserMapper;
 import com.xiaohua.model.dto.user.UserLoginRequest;
+import com.xiaohua.model.dto.user.UserPasswordUpdateRequest;
 import com.xiaohua.model.dto.user.UserRegisterRequest;
+import com.xiaohua.model.dto.user.UserUpdateRequest;
 import com.xiaohua.model.entity.User;
 import com.xiaohua.model.enums.UserRoleEnum;
 import com.xiaohua.model.vo.RankVO;
@@ -165,6 +167,64 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
         // 移除登录态
         request.getSession().removeAttribute(USER_LOGIN_STATE);
+        return true;
+    }
+
+    @Override
+    public UserVO updateUser(UserUpdateRequest userUpdateRequest, HttpServletRequest request) {
+        // 只能更新当前登录用户自己，id 从登录态取，不信任请求体
+        User loginUser = this.getLoginUser(request);
+        Long userId = loginUser.getId();
+
+        User updateUser = new User();
+        updateUser.setId(userId);
+
+        if (StrUtil.isNotBlank(userUpdateRequest.getNickname())) {
+            updateUser.setNickname(userUpdateRequest.getNickname());
+        }
+        if (StrUtil.isNotBlank(userUpdateRequest.getAvatar())) {
+            updateUser.setAvatar(userUpdateRequest.getAvatar());
+        }
+        // 方向标签决定后续出题方向
+        if (StrUtil.isNotBlank(userUpdateRequest.getDirection())) {
+            updateUser.setDirection(userUpdateRequest.getDirection());
+        }
+
+        if (!this.updateById(updateUser)) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "更新失败");
+        }
+
+        // 刷新登录态，避免 Session 里仍是旧数据
+        User latestUser = this.getById(userId);
+        request.getSession().setAttribute(USER_LOGIN_STATE, latestUser);
+        return this.getLoginUserVO(latestUser);
+    }
+
+    @Override
+    public boolean updatePassword(UserPasswordUpdateRequest passwordUpdateRequest, HttpServletRequest request) {
+        User loginUser = this.getLoginUser(request);
+        String oldPassword = passwordUpdateRequest.getOldPassword();
+        String newPassword = passwordUpdateRequest.getNewPassword();
+
+        if (StrUtil.hasBlank(oldPassword, newPassword)) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "旧密码和新密码不能为空");
+        }
+        if (newPassword.length() < 8) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "新密码长度不能小于8位");
+        }
+        if (!passwordEncoder.matches(oldPassword, loginUser.getPassword())) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "旧密码错误");
+        }
+
+        User updateUser = new User();
+        updateUser.setId(loginUser.getId());
+        updateUser.setPassword(passwordEncoder.encode(newPassword));
+        if (!this.updateById(updateUser)) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "修改密码失败");
+        }
+
+        // 刷新登录态，保持登录有效（无需重新登录）
+        request.getSession().setAttribute(USER_LOGIN_STATE, this.getById(loginUser.getId()));
         return true;
     }
 

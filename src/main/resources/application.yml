@@ -111,5 +111,14 @@ milvus:
   port: 19530
   collection-name: level_knowledge
   dimension: 1536
+# RAG 检索配置
+rag:
+  retrieve:
+    top-k: 3            # 最终交给大模型的片段数
+  rerank:
+    enabled: true       # 是否开启 rerank 精排
+    recall: 20          # 向量检索先召回多少条候选，供 rerank 精排
+    model: gte-rerank-v2
+    base-url: https://dashscope.aliyuncs.com/api/v1
 
 

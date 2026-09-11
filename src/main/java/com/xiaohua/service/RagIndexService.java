@@ -1,5 +1,6 @@
 package com.xiaohua.service;
 
+import com.xiaohua.model.vo.RebuildStatusVO;
 import dev.langchain4j.community.model.dashscope.QwenEmbeddingModel;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
@@ -14,6 +15,7 @@ import io.milvus.param.MetricType;
 import io.milvus.param.R;
 import io.milvus.param.collection.GetCollectionStatisticsParam;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -27,6 +29,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * 知识库索引服务：管理向量库生命周期（建库、首次入库、重建）。
@@ -41,6 +45,9 @@ public class RagIndexService {
 
     @Resource
     private QwenEmbeddingModel embeddingModel;
+
+    @Resource
+    private RetrievalCache retrievalCache;
 
     @Value("${milvus.host:localhost}")
     private String host;
@@ -64,6 +71,16 @@ public class RagIndexService {
 
     /** 当前生效的向量库 */
     private volatile MilvusEmbeddingStore embeddingStore;
+
+    /** 重建索引的单线程执行器（串行执行，避免并发重建） */
+    private final ExecutorService rebuildExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "rag-rebuild");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** 重建状态（volatile，每次状态变化整体替换） */
+    private volatile RebuildStatusVO rebuildStatus = idleStatus();
 
     @PostConstruct
     public void init() {
@@ -90,17 +107,77 @@ public class RagIndexService {
     }
 
     /**
-     * 重建索引：新建一个集合 → 入库 → 切引用。旧集合保留，不做同名 drop。
+     * 触发异步重建索引。立即返回，实际重建在后台线程执行。
+     *
+     * @return true 表示已提交；false 表示已有重建在进行中
      */
-    public synchronized void rebuild() {
-        log.info("开始重建索引...");
-        String newName = newCollectionName();
-        MilvusEmbeddingStore fresh = buildStore(newName);
-        ingest(fresh);
-        this.currentCollectionName = newName;
-        this.embeddingStore = fresh;
-        saveCurrentCollectionName(newName);
-        log.info("重建索引完成，新集合 [{}]", newName);
+    public synchronized boolean triggerRebuild() {
+        if ("RUNNING".equals(rebuildStatus.getState())) {
+            return false;
+        }
+        RebuildStatusVO running = new RebuildStatusVO();
+        running.setState("RUNNING");
+        running.setMessage("重建中");
+        running.setStartTime(System.currentTimeMillis());
+        this.rebuildStatus = running;
+
+        rebuildExecutor.submit(this::doRebuild);
+        return true;
+    }
+
+    /**
+     * 获取当前重建状态（供前端轮询）。
+     */
+    public RebuildStatusVO getRebuildStatus() {
+        return rebuildStatus;
+    }
+
+    /**
+     * 实际重建：新建一个集合 → 入库 → 切引用。旧集合保留，不做同名 drop。
+     */
+    private void doRebuild() {
+        long start = System.currentTimeMillis();
+        try {
+            String newName = newCollectionName();
+            log.info("开始重建索引，新集合 [{}]", newName);
+            MilvusEmbeddingStore fresh = buildStore(newName);
+            ingest(fresh);
+            this.currentCollectionName = newName;
+            this.embeddingStore = fresh;
+            saveCurrentCollectionName(newName);
+            // 知识库已变，清空检索缓存，避免返回旧结果
+            retrievalCache.clearAll();
+
+            long cost = System.currentTimeMillis() - start;
+            RebuildStatusVO ok = new RebuildStatusVO();
+            ok.setState("SUCCESS");
+            ok.setMessage("重建完成");
+            ok.setCollectionName(newName);
+            ok.setStartTime(start);
+            ok.setCostMillis(cost);
+            this.rebuildStatus = ok;
+            log.info("重建索引完成，新集合 [{}]，耗时 {} ms", newName, cost);
+        } catch (Exception e) {
+            RebuildStatusVO failed = new RebuildStatusVO();
+            failed.setState("FAILED");
+            failed.setMessage(e.getMessage());
+            failed.setStartTime(start);
+            failed.setCostMillis(System.currentTimeMillis() - start);
+            this.rebuildStatus = failed;
+            log.error("重建索引失败", e);
+        }
+    }
+
+    private RebuildStatusVO idleStatus() {
+        RebuildStatusVO idle = new RebuildStatusVO();
+        idle.setState("IDLE");
+        idle.setMessage("空闲");
+        return idle;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        rebuildExecutor.shutdown();
     }
 
     private String newCollectionName() {
