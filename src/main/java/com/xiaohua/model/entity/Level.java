@@ -56,6 +56,16 @@ public class Level {
     private Integer priority;
 
     /**
+     * 关卡来源（AI-AI生成，PRESET-人工预设题库）
+     */
+    private String source;
+
+    /**
+     * 标准答案解析（预设题用；AI 题的解析在判分时生成）
+     */
+    private String standardAnswer;
+
+    /**
      * 创建时间
      */
     private Date createTime;

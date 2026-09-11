@@ -42,6 +42,11 @@ public class UserVO implements Serializable {
     private Integer salary;
 
     /**
+     * 学习方向标签
+     */
+    private String direction;
+
+    /**
      * 创建时间
      */
     private LocalDateTime createTime;

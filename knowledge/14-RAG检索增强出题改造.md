@@ -42,7 +42,7 @@ RAG = **Retrieval-Augmented Generation（检索增强生成）**。
     → 逐段向量化
     → 存进内存向量库
 
-【在线 · 每次生成关卡时跑】LevelServiceImpl.generateLevel(salary, direction)
+【在线 · 每次生成关卡时跑】LevelServiceImpl.generateLevel(salary, direction, userId)
   ① knowledgeService.retrieve(direction)
        把 direction 也向量化 → 在库里算相似度 → 取最像的前 3 段 → 拼成一段文本
   ② levelAiService.generateLevel(salary, direction, knowledge)
@@ -65,8 +65,8 @@ generateLevel(salary)
 **现在**：
 
 ```java
-LevelVO generateLevel(int salary, String direction) {
-    String directionText = StrUtil.isBlank(direction) ? "Java后端开发" : direction;
+LevelVO generateLevel(int salary, String direction, Long userId) {
+    String directionText = StrUtil.isBlank(direction) ? "全栈开发" : direction;
     // 新增：先检索
     String knowledge = knowledgeService.retrieve(directionText);
     // 新增：把 knowledge 和 direction 一起传进模型

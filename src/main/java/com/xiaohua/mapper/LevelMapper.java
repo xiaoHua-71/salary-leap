@@ -23,4 +23,14 @@ public interface LevelMapper extends BaseMapper<Level> {
      * @return 人气关卡列表
      */
     List<HotLevelVO> selectHotLevels(@Param("limit") int limit, @Param("direction") String direction);
+
+    /**
+     * 按学习方向随机取一道题（预设题库兜底用）。
+     * 优先人工预设题（source='PRESET'），并排除该用户已答过的题。
+     *
+     * @param direction 学习方向标签（或 "通用"）
+     * @param userId    当前用户 id（用于排除已答题目）
+     * @return 关卡（查不到返回 null）
+     */
+    Level selectRandomByDirection(@Param("direction") String direction, @Param("userId") Long userId);
 }

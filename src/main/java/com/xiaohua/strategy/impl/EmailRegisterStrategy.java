@@ -66,6 +66,7 @@ public class EmailRegisterStrategy implements RegisterStrategy {
         user.setNickname(email.split("@")[0]);
         user.setUserRole(UserRoleEnum.USER.getValue());
         user.setSalary(10000);
+        user.setDirection(StringUtils.isBlank(request.getDirection()) ? "全栈开发" : request.getDirection());
         if (userMapper.insert(user) <= 0) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "用户注册失败");
         }

@@ -133,6 +133,16 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
+    public User getLoginUserOrNull(HttpServletRequest request) {
+        Object userObj = request.getSession().getAttribute(USER_LOGIN_STATE);
+        User currentUser = (User) userObj;
+        if (currentUser == null || currentUser.getId() == null) {
+            return null;
+        }
+        return this.getById(currentUser.getId());
+    }
+
+    @Override
     public UserVO getLoginUserVO(User user) {
         if (user == null) {
             return null;

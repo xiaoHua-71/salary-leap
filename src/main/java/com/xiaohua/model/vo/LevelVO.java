@@ -39,4 +39,9 @@ public class LevelVO {
      * 目标薪资
      */
     private Integer targetSalary;
+
+    /**
+     * 关卡来源（AI-AI生成，PRESET-预设题库兜底）
+     */
+    private String source;
 }

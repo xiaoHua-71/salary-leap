@@ -51,4 +51,9 @@ public class UserRegisterRequest implements Serializable {
      * 注册方式（password / email）
      */
     private String registerType;
+
+    /**
+     * 学习方向标签（Java后端开发、前端开发、Go开发、Agent开发或自定义，可空）
+     */
+    private String direction;
 }

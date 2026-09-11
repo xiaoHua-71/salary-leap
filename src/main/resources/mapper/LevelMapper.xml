@@ -13,6 +13,8 @@
             <result property="targetSalary" column="targetSalary" jdbcType="INTEGER"/>
             <result property="direction" column="direction" jdbcType="VARCHAR"/>
             <result property="priority" column="priority" jdbcType="INTEGER"/>
+            <result property="source" column="source" jdbcType="VARCHAR"/>
+            <result property="standardAnswer" column="standardAnswer" jdbcType="VARCHAR"/>
             <result property="createTime" column="createTime" jdbcType="TIMESTAMP"/>
             <result property="updateTime" column="updateTime" jdbcType="TIMESTAMP"/>
             <result property="isDelete" column="isDelete" jdbcType="TINYINT"/>
@@ -48,5 +50,16 @@
         </if>
         ORDER BY playCount DESC, l.priority DESC, l.id DESC
         LIMIT #{limit}
+    </select>
+
+    <!-- 按方向随机取预设题：优先 PRESET，排除用户已答过的，查不到返回 null -->
+    <select id="selectRandomByDirection" resultMap="BaseResultMap">
+        SELECT *
+        FROM level
+        WHERE isDelete = 0
+          AND direction = #{direction}
+          AND id NOT IN (SELECT levelId FROM user_level WHERE userId = #{userId} AND isDelete = 0)
+        ORDER BY (source = 'PRESET') DESC, RAND()
+        LIMIT 1
     </select>
 </mapper>

@@ -16,13 +16,15 @@ import java.util.List;
 public interface LevelService extends IService<Level> {
 
     /**
-     * 根据薪资和学习方向生成关卡并入库（方向用于检索知识库，RAG 出题）
+     * 根据薪资和学习方向生成关卡并入库（方向用于检索知识库，RAG 出题）。
+     * AI 出题失败时降级到预设题库（按方向查，三级兜底）。
      *
      * @param salary    当前薪资
-     * @param direction 学习方向（可空，为空时默认 Java 后端开发）
+     * @param direction 学习方向（可空，为空时默认全栈开发）
+     * @param userId    当前用户 id（用于预设题库排除已答题目，可空）
      * @return 关卡视图（选项不含答案）
      */
-    LevelVO generateLevel(int salary, String direction);
+    LevelVO generateLevel(int salary, String direction, Long userId);
 
     /**
      * 提交作答并生成报告，更新用户薪资

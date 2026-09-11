@@ -16,13 +16,15 @@ CREATE TABLE `user`
     `avatar`     VARCHAR(512) DEFAULT NULL COMMENT '用户头像URL',
     `userRole`   VARCHAR(20) DEFAULT 'user' COMMENT '用户角色（user/admin）',
     `salary`     INT         DEFAULT 10000 COMMENT '当前薪资（单位：元/月）',
+    `direction`  VARCHAR(100) DEFAULT '全栈开发' COMMENT '学习方向标签（Java后端开发、前端开发、Go开发、Agent开发或自定义）',
     `createTime` DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updateTime` DATETIME    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `isDelete`   TINYINT     DEFAULT 0 COMMENT '逻辑删除（0-未删除，1-已删除）',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_username` (`username`),
     KEY          `idx_createTime` (`createTime`),
-    KEY          `idx_userRole` (`userRole`)
+    KEY          `idx_userRole` (`userRole`),
+    KEY          `idx_direction` (`direction`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
 
 -- 关卡表
@@ -36,6 +38,8 @@ CREATE TABLE `level`
     `targetSalary` INT      DEFAULT 10000 COMMENT '目标薪资范围（用于难度匹配）',
     `direction`    VARCHAR(100) DEFAULT '全栈开发' COMMENT '学习方向（前端开发、Java后端开发、软件测试等）',
     `priority`     INT      DEFAULT 0 COMMENT '关卡优先级（0-普通，99-推荐，999-精选，9999-置顶）',
+    `source`       VARCHAR(20) DEFAULT 'AI' COMMENT '关卡来源（AI-AI生成，PRESET-人工预设题库）',
+    `standardAnswer` TEXT   DEFAULT NULL COMMENT '标准答案解析（预设题用，AI 题在判分时生成）',
     `createTime`   DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updateTime`   DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `isDelete`     TINYINT  DEFAULT 0 COMMENT '逻辑删除（0-未删除，1-已删除）',
@@ -46,6 +50,10 @@ CREATE TABLE `level`
     KEY            `idx_priority` (`priority`),
     KEY            `idx_createTime` (`createTime`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='关卡表';
+
+-- 增量变更（已有库执行，无迁移工具，手动执行）
+-- ALTER TABLE `user`  ADD COLUMN `direction` VARCHAR(100) DEFAULT '全栈开发' COMMENT '学习方向标签', ADD KEY `idx_direction` (`direction`);
+-- ALTER TABLE `level` ADD COLUMN `source` VARCHAR(20) DEFAULT 'AI' COMMENT '关卡来源（AI/PRESET）', ADD COLUMN `standardAnswer` TEXT DEFAULT NULL COMMENT '标准答案解析（预设题用）';
 
 -- 用户关卡表（记录用户闯关信息）
 CREATE TABLE `user_level`

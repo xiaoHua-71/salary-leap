@@ -4,10 +4,13 @@ import com.xiaohua.common.BaseResponse;
 import com.xiaohua.common.ErrorCode;
 import com.xiaohua.common.ResultUtils;
 import com.xiaohua.model.dto.level.LevelSubmitRequest;
+import com.xiaohua.model.entity.User;
 import com.xiaohua.model.vo.HotLevelVO;
 import com.xiaohua.model.vo.LevelVO;
 import com.xiaohua.model.vo.ReportVO;
 import com.xiaohua.service.LevelService;
+import com.xiaohua.service.UserService;
+import cn.hutool.core.util.StrUtil;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -32,17 +35,32 @@ public class LevelController {
     @Resource
     private LevelService levelService;
 
+    @Resource
+    private UserService userService;
+
     /**
-     * 生成关卡（测试用，后续改为根据登录用户薪资生成）
+     * 生成关卡。方向/薪资优先取登录用户的标签和薪资，未登录则回退到请求参数。
+     * AI 出题失败时自动降级到预设题库。
      *
-     * @param salary    当前薪资
-     * @param direction 学习方向（可空，用于 RAG 检索知识库）
+     * @param salary    当前薪资（未登录时使用）
+     * @param direction 学习方向（未登录时使用，用于 RAG 检索知识库）
      */
     @PostMapping("/generate")
     public BaseResponse<LevelVO> generateLevel(@RequestParam(defaultValue = "10000") int salary,
-                                               @RequestParam(required = false) String direction) {
+                                               @RequestParam(required = false) String direction,
+                                               HttpServletRequest request) {
         try {
-            LevelVO vo = levelService.generateLevel(salary, direction);
+            User loginUser = userService.getLoginUserOrNull(request);
+            if (loginUser != null) {
+                if (loginUser.getSalary() != null) {
+                    salary = loginUser.getSalary();
+                }
+                if (StrUtil.isNotBlank(loginUser.getDirection())) {
+                    direction = loginUser.getDirection();
+                }
+            }
+            Long userId = loginUser == null ? null : loginUser.getId();
+            LevelVO vo = levelService.generateLevel(salary, direction, userId);
             return ResultUtils.success(vo);
         } catch (Exception e) {
             log.error("生成关卡失败", e);

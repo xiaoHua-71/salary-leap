@@ -57,6 +57,11 @@ public class User implements Serializable {
     private Integer salary;
 
     /**
+     * 学习方向标签（Java后端开发、前端开发、Go开发、Agent开发或自定义）
+     */
+    private String direction;
+
+    /**
      * 创建时间
      */
     private Date createTime;
