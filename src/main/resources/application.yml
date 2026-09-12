@@ -102,7 +102,7 @@ langchain4j:
   community:
     dashscope:
       chat-model:
-        api-key:
+        api-key: ${DASHSCOPE_API_KEY}
         base-url: https://ws-xupotu1vk2yorol6.cn-beijing.maas.aliyuncs.com/api/v1
         model-name: qwen3.7-max
 # Milvus 向量库配置（langchain4j-milvus 无 starter，自行用 @Value 读取）
@@ -115,6 +115,11 @@ milvus:
 rag:
   retrieve:
     top-k: 3            # 最终交给大模型的片段数
+    max-per-source: 1   # 同一篇文章**优先**最多占 top-k 里的几个位置（<=0 表示不限制）
+                        # 为什么要限制：chunk=500/overlap=100，同篇相邻片段自带 100 字重叠，
+                        # 让它占满 top-k 等于把格子浪费在近似重复内容上
+                        # 注意是「优先」不是硬限制：候选池里找不到别的来源时会用重复片段补齐，
+                        # 宁可有重复也不要少给知识（见 KnowledgeService.selectDiverse）
   rerank:
     enabled: true       # 是否开启 rerank 精排
     recall: 20          # 向量检索先召回多少条候选，供 rerank 精排
@@ -125,6 +130,10 @@ rag:
     recall: 20          # BM25 这一路召回多少条候选
     rrf-k: 60           # RRF 平滑常数，原论文默认 60
     max-candidates: 30  # 融合去重后、送进 rerank 前的候选上限
+  # 查询改写（把「学习方向」短标签扩展成多条具体主题查询）
+  rewrite:
+    enabled: true       # 是否开启查询改写
+    count: 4            # 最多扩展出几条子查询（不含原查询）
   # 文档切分参数
   split:
     chunk-size: 500     # 单个知识片段的最大字符数
@@ -132,7 +141,113 @@ rag:
   # 网页文档加载（把真实网页正文抓进知识库）
   web:
     enabled: true         # 是否抓取网页入库
-    urls: [https://javaguide.cn/]              # 要抓取的页面列表，一行一个；留空则跳过抓取
+    # 要抓取的页面列表，一行一个；留空则跳过抓取。都是文章正文页，不含只有导航的首页。
+    # 第一批(27)：Java 基础(14) + Redis(13)
+    # 第二批(65)：JVM(10) + 并发(16) + 集合(12) + MySQL(16) + 框架/Spring(11)
+    #   补第二批的原因：查询改写生成的子查询问的就是 JVM/并发/集合/Spring/MySQL 这些主题，
+    #   而第一批的 java/basis 只有语言基础（泛型、反射、代理…），库里没东西可捞，改写就没收益。
+    urls:
+      - https://javaguide.cn/java/basis/bigdecimal.html
+      - https://javaguide.cn/java/basis/generics-and-wildcards.html
+      - https://javaguide.cn/java/basis/java-basic-questions-01.html
+      - https://javaguide.cn/java/basis/java-basic-questions-02.html
+      - https://javaguide.cn/java/basis/java-basic-questions-03.html
+      - https://javaguide.cn/java/basis/java-keyword-summary.html
+      - https://javaguide.cn/java/basis/money-long-vs-bigdecimal.html
+      - https://javaguide.cn/java/basis/proxy.html
+      - https://javaguide.cn/java/basis/reflection.html
+      - https://javaguide.cn/java/basis/serialization.html
+      - https://javaguide.cn/java/basis/spi.html
+      - https://javaguide.cn/java/basis/syntactic-sugar.html
+      - https://javaguide.cn/java/basis/unsafe.html
+      - https://javaguide.cn/java/basis/why-there-only-value-passing-in-java.html
+      - https://javaguide.cn/database/redis/3-commonly-used-cache-read-and-write-strategies.html
+      - https://javaguide.cn/database/redis/cache-basics.html
+      - https://javaguide.cn/database/redis/redis-cluster.html
+      - https://javaguide.cn/database/redis/redis-common-blocking-problems-summary.html
+      - https://javaguide.cn/database/redis/redis-data-structures-01.html
+      - https://javaguide.cn/database/redis/redis-data-structures-02.html
+      - https://javaguide.cn/database/redis/redis-delayed-task.html
+      - https://javaguide.cn/database/redis/redis-memory-fragmentation.html
+      - https://javaguide.cn/database/redis/redis-persistence.html
+      - https://javaguide.cn/database/redis/redis-questions-01.html
+      - https://javaguide.cn/database/redis/redis-questions-02.html
+      - https://javaguide.cn/database/redis/redis-skiplist.html
+      - https://javaguide.cn/database/redis/redis-stream-mq.html
+      # --- 第二批：JVM ---
+      - https://javaguide.cn/java/jvm/jvm-intro.html
+      - https://javaguide.cn/java/jvm/memory-area.html
+      - https://javaguide.cn/java/jvm/jvm-garbage-collection.html
+      - https://javaguide.cn/java/jvm/class-file-structure.html
+      - https://javaguide.cn/java/jvm/class-loading-process.html
+      - https://javaguide.cn/java/jvm/classloader.html
+      - https://javaguide.cn/java/jvm/jvm-parameters-intro.html
+      - https://javaguide.cn/java/jvm/jdk-monitoring-and-troubleshooting-tools.html
+      - https://javaguide.cn/java/jvm/jvm-in-action.html
+      - https://javaguide.cn/java/jvm/jvm-interview-questions.html
+      # --- 第二批：并发 ---
+      - https://javaguide.cn/java/concurrent/java-concurrent-questions-01.html
+      - https://javaguide.cn/java/concurrent/java-concurrent-questions-02.html
+      - https://javaguide.cn/java/concurrent/java-concurrent-questions-03.html
+      - https://javaguide.cn/java/concurrent/jmm.html
+      - https://javaguide.cn/java/concurrent/java-lock.html
+      - https://javaguide.cn/java/concurrent/reentrantlock.html
+      - https://javaguide.cn/java/concurrent/optimistic-lock-and-pessimistic-lock.html
+      - https://javaguide.cn/java/concurrent/cas.html
+      - https://javaguide.cn/java/concurrent/aqs.html
+      - https://javaguide.cn/java/concurrent/atomic-classes.html
+      - https://javaguide.cn/java/concurrent/threadlocal.html
+      - https://javaguide.cn/java/concurrent/java-thread-pool-summary.html
+      - https://javaguide.cn/java/concurrent/java-thread-pool-best-practices.html
+      - https://javaguide.cn/java/concurrent/java-concurrent-collections.html
+      - https://javaguide.cn/java/concurrent/completablefuture-intro.html
+      - https://javaguide.cn/java/concurrent/virtual-thread.html
+      # --- 第二批：集合 ---
+      - https://javaguide.cn/java/collection/java-collection-questions-01.html
+      - https://javaguide.cn/java/collection/java-collection-questions-02.html
+      - https://javaguide.cn/java/collection/java-collection-precautions-for-use.html
+      - https://javaguide.cn/java/collection/arraylist-source-code.html
+      - https://javaguide.cn/java/collection/linkedlist-source-code.html
+      - https://javaguide.cn/java/collection/hashmap-source-code.html
+      - https://javaguide.cn/java/collection/linkedhashmap-source-code.html
+      - https://javaguide.cn/java/collection/concurrent-hash-map-source-code.html
+      - https://javaguide.cn/java/collection/copyonwritearraylist-source-code.html
+      - https://javaguide.cn/java/collection/arrayblockingqueue-source-code.html
+      - https://javaguide.cn/java/collection/priorityqueue-source-code.html
+      - https://javaguide.cn/java/collection/delayqueue-source-code.html
+      # --- 第二批：MySQL ---
+      - https://javaguide.cn/database/mysql/mysql-index.html
+      - https://javaguide.cn/database/mysql/mysql-index-invalidation.html
+      - https://javaguide.cn/database/mysql/index-invalidation-caused-by-implicit-conversion.html
+      - https://javaguide.cn/database/mysql/mysql-query-execution-plan.html
+      - https://javaguide.cn/database/mysql/transaction-isolation-level.html
+      - https://javaguide.cn/database/mysql/innodb-implementation-of-mvcc.html
+      - https://javaguide.cn/database/mysql/how-sql-executed-in-mysql.html
+      - https://javaguide.cn/database/mysql/mysql-logs.html
+      - https://javaguide.cn/database/mysql/mysql-query-cache.html
+      - https://javaguide.cn/database/mysql/mysql-questions-01.html
+      - https://javaguide.cn/database/mysql/a-thousand-lines-of-mysql-study-notes.html
+      - https://javaguide.cn/database/mysql/mysql-high-performance-optimization-specification-recommendations.html
+      - https://javaguide.cn/database/mysql/mysql-auto-increment-primary-key-continuous.html
+      - https://javaguide.cn/database/mysql/mysql-backup-and-restore.html
+      - https://javaguide.cn/database/mysql/mysql-to-elasticsearch-sync.html
+      - https://javaguide.cn/database/mysql/some-thoughts-on-database-storage-time.html
+      # --- 第二批：框架 / Spring ---
+      - https://javaguide.cn/system-design/framework/spring/spring-knowledge-and-questions-summary.html
+      - https://javaguide.cn/system-design/framework/spring/ioc-and-aop.html
+      - https://javaguide.cn/system-design/framework/spring/spring-boot-auto-assembly-principles.html
+      - https://javaguide.cn/system-design/framework/spring/spring-common-annotations.html
+      - https://javaguide.cn/system-design/framework/spring/spring-transaction.html
+      - https://javaguide.cn/system-design/framework/spring/spring-design-patterns-summary.html
+      - https://javaguide.cn/system-design/framework/spring/springboot-knowledge-and-questions-summary.html
+      - https://javaguide.cn/system-design/framework/spring/springboot-source-code.html
+      - https://javaguide.cn/system-design/framework/spring/async.html
+      - https://javaguide.cn/system-design/framework/mybatis/mybatis-interview.html
+      - https://javaguide.cn/system-design/framework/netty.html
+      # --- 第三批：软件测试（1 页）---
+      # 前端源不可用：interview.busyhe.com 的 sitemap 指向 fe-interview.busyhe.com（已 NXDOMAIN 下线），
+      #   该主机下只有目录落地页、文章路径全 404，其他 busyhe 子域是 JS 渲染的空壳，故未收录
+      - https://developer.baidu.com/article/detail.html?id=4647986
     cache-dir: docs/web   # 正文缓存目录（有缓存即复用；删掉缓存文件即重新抓取）
     timeout-ms: 10000
     delay-ms: 500         # 相邻两次抓取的间隔，避免给目标站点压力

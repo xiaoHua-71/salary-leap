@@ -9,13 +9,8 @@ import dev.langchain4j.data.document.splitter.DocumentSplitters;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.milvus.MilvusEmbeddingStore;
-import io.milvus.client.MilvusServiceClient;
-import io.milvus.grpc.GetCollectionStatisticsResponse;
-import io.milvus.param.ConnectParam;
 import io.milvus.param.IndexType;
 import io.milvus.param.MetricType;
-import io.milvus.param.R;
-import io.milvus.param.collection.GetCollectionStatisticsParam;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.annotation.Resource;
@@ -40,6 +35,13 @@ import java.util.concurrent.Executors;
  * <p>集合名带时间戳后缀（如 {@code level_knowledge_1725816000000}），
  * 每次重建都新建一个集合再切引用，<b>不做同名 drop + 重建</b>，
  * 从而绕开 Milvus Lite 上删同名集合容易崩溃的问题。</p>
+ *
+ * <p><b>为什么不用 Milvus 的统计接口判断「集合是否已入库」</b>：
+ * {@code getCollectionStatistics} 返回的 {@code row_count} <b>只统计已 flush 的数据</b>，
+ * 而 {@code MilvusEmbeddingStore.addAll} 并不触发 flush —— 于是刚重建完的集合
+ * 统计出来的行数是 0，重启时会被误判成「空集合」而<b>把整个知识库再灌一遍</b>。
+ * 所以入库状态只认我们自己写的元文件：它记录「哪个集合、入了多少段」，
+ * 是入库成功之后才落盘的，重启时据此复用即可，完全不依赖 Milvus 的内部行为。</p>
  */
 @Service
 @Slf4j
@@ -70,10 +72,6 @@ public class RagIndexService {
     /** 相邻片段的重叠字符数 */
     @Value("${rag.split.overlap:100}")
     private int overlap;
-
-    /** 要抓取入库的网页地址（rag.web.urls，可为空） */
-    @Value("${rag.web.urls:}")
-    private List<String> webUrls;
 
     @Value("${milvus.host:localhost}")
     private String host;
@@ -110,29 +108,34 @@ public class RagIndexService {
 
     @PostConstruct
     public void init() {
-        currentCollectionName = loadCurrentCollectionName();
-        if (currentCollectionName == null || currentCollectionName.isBlank()) {
-            currentCollectionName = newCollectionName();
-        }
-        embeddingStore = buildStore(currentCollectionName);
         // 知识片段只切一次：向量入库和 BM25 索引共用同一份，避免两份切分结果对不上
         List<TextSegment> segments = loadAndSplit();
-        long rowCount = countRows(currentCollectionName);
-        if (rowCount > 0) {
-            log.info("集合 [{}] 已有 {} 条向量，跳过入库", currentCollectionName, rowCount);
-            if (rowCount != segments.size()) {
-                log.warn("集合 [{}] 有 {} 条向量，但知识库文件切出 {} 段，两者可能不一致；"
-                                + "改过 knowledge/*.txt 后请调 POST /rag/rebuild 重建",
-                        currentCollectionName, rowCount, segments.size());
-            }
-        } else {
-            log.info("集合 [{}] 为空，开始入库...", currentCollectionName);
+
+        CollectionMeta meta = loadMeta();
+        boolean freshCollection = meta == null || meta.collectionName() == null
+                || meta.collectionName().isBlank();
+        currentCollectionName = freshCollection ? newCollectionName() : meta.collectionName();
+        embeddingStore = buildStore(currentCollectionName);
+
+        if (freshCollection) {
+            log.info("新建集合 [{}]，开始入库...", currentCollectionName);
             ingest(embeddingStore, segments);
+        } else {
+            log.info("复用集合 [{}]，跳过入库", currentCollectionName);
+            if (meta.segmentCount() == null) {
+                log.info("元文件是旧格式（只记了集合名、没记片段数），本次按「已入库」处理");
+            } else if (meta.segmentCount() != segments.size()) {
+                log.warn("集合 [{}] 入库时是 {} 段，当前知识库切出 {} 段，两者不一致；"
+                                + "改过知识库内容或切分参数后请调 POST /rag/rebuild 重建。"
+                                + "注意不要在旧集合上重复入库",
+                        currentCollectionName, meta.segmentCount(), segments.size());
+            }
         }
+
         // BM25 索引是纯内存的、进程重启就没了，所以必须无条件重建
         // （不能只在「入库」分支里建，否则复用上次集合时 BM25 会是空的）
         bm25Index.rebuild(segments);
-        saveCurrentCollectionName(currentCollectionName);
+        saveMeta(new CollectionMeta(currentCollectionName, segments.size()));
     }
 
     /**
@@ -186,7 +189,7 @@ public class RagIndexService {
             // 该窗口最多让某一次检索的排序略脏，不值得为此引入额外的持有类重构。
             this.currentCollectionName = newName;
             this.embeddingStore = fresh;
-            saveCurrentCollectionName(newName);
+            saveMeta(new CollectionMeta(newName, segments.size()));
             // 知识库已变，清空检索缓存，避免返回旧结果
             retrievalCache.clearAll();
 
@@ -256,7 +259,7 @@ public class RagIndexService {
         for (String path : CLASSPATH_DOCS) {
             documents.add(Document.from(readClasspath(path), Metadata.from(Document.FILE_NAME, path)));
         }
-        documents.addAll(webPageLoader.load(webUrls));
+        documents.addAll(webPageLoader.load());
         return documents;
     }
 
@@ -272,45 +275,71 @@ public class RagIndexService {
         return segments;
     }
 
-    private long countRows(String collectionName) {
-        MilvusServiceClient client = new MilvusServiceClient(
-                ConnectParam.newBuilder().withHost(host).withPort(port).build());
-        try {
-            R<GetCollectionStatisticsResponse> resp = client.getCollectionStatistics(
-                    GetCollectionStatisticsParam.newBuilder()
-                            .withCollectionName(collectionName)
-                            .build());
-            if (resp.getStatus() != 0 || resp.getData() == null) {
-                return 0;
-            }
-            return resp.getData().getStatsList().stream()
-                    .filter(kv -> "row_count".equals(kv.getKey()))
-                    .mapToLong(kv -> Long.parseLong(kv.getValue()))
-                    .findFirst()
-                    .orElse(0L);
-        } finally {
-            client.close();
-        }
-    }
-
-    private String loadCurrentCollectionName() {
+    /**
+     * 读元文件。文件不存在或读不出来时返回 null（调用方按「新建集合」处理）。
+     */
+    private CollectionMeta loadMeta() {
         try {
             Path p = Paths.get(metaFilePath);
-            if (Files.exists(p)) {
-                return Files.readString(p).trim();
+            if (!Files.exists(p)) {
+                return null;
             }
+            return parseMeta(Files.readString(p));
         } catch (IOException e) {
-            log.warn("读取集合名元文件失败: {}", e.getMessage());
+            log.warn("读取集合元文件失败，将按新建集合处理: {}", e.getMessage());
+            return null;
         }
-        return null;
     }
 
-    private void saveCurrentCollectionName(String name) {
+    private void saveMeta(CollectionMeta meta) {
         try {
-            Files.writeString(Paths.get(metaFilePath), name);
+            Files.writeString(Paths.get(metaFilePath), formatMeta(meta));
         } catch (IOException e) {
-            log.warn("写入集合名元文件失败: {}", e.getMessage());
+            log.warn("写入集合元文件失败: {}", e.getMessage());
         }
+    }
+
+    /**
+     * 解析元文件内容。
+     *
+     * <p>新格式两行 {@code collection=} / {@code segments=}；
+     * 兼容旧格式（整个文件只有集合名一行，此时片段数未知，返回 null）。</p>
+     */
+    static CollectionMeta parseMeta(String content) {
+        String name = null;
+        Integer segmentCount = null;
+        for (String rawLine : content.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            int eq = line.indexOf('=');
+            if (eq <= 0) {
+                // 旧格式：只有集合名，没有片段数
+                if (name == null) {
+                    name = line;
+                }
+                continue;
+            }
+            String key = line.substring(0, eq).trim();
+            String value = line.substring(eq + 1).trim();
+            if ("collection".equals(key)) {
+                name = value;
+            } else if ("segments".equals(key)) {
+                try {
+                    segmentCount = Integer.valueOf(value);
+                } catch (NumberFormatException ignored) {
+                    // 片段数写坏了就当未知，不影响集合名的复用
+                    log.warn("元文件里的片段数无法解析: {}", value);
+                }
+            }
+        }
+        return new CollectionMeta(name, segmentCount);
+    }
+
+    static String formatMeta(CollectionMeta meta) {
+        return "collection=" + meta.collectionName() + System.lineSeparator()
+                + "segments=" + meta.segmentCount() + System.lineSeparator();
     }
 
     private String readClasspath(String path) {
@@ -319,5 +348,13 @@ public class RagIndexService {
         } catch (IOException e) {
             throw new IllegalStateException("读取知识库失败: " + path, e);
         }
+    }
+
+    /**
+     * 集合元信息：当前生效的集合名 + 入库时的片段数。
+     *
+     * <p>{@code segmentCount} 可能是 null —— 旧版元文件只记了集合名。</p>
+     */
+    record CollectionMeta(String collectionName, Integer segmentCount) {
     }
 }
