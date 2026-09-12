@@ -102,7 +102,7 @@ langchain4j:
   community:
     dashscope:
       chat-model:
-        api-key: xxx
+        api-key:
         base-url: https://ws-xupotu1vk2yorol6.cn-beijing.maas.aliyuncs.com/api/v1
         model-name: qwen3.7-max
 # Milvus 向量库配置（langchain4j-milvus 无 starter，自行用 @Value 读取）
@@ -120,5 +120,22 @@ rag:
     recall: 20          # 向量检索先召回多少条候选，供 rerank 精排
     model: gte-rerank-v2
     base-url: https://dashscope.aliyuncs.com/api/v1
+  hybrid:
+    enabled: true       # 是否开启混合检索（BM25 关键词 + 向量双路召回）
+    recall: 20          # BM25 这一路召回多少条候选
+    rrf-k: 60           # RRF 平滑常数，原论文默认 60
+    max-candidates: 30  # 融合去重后、送进 rerank 前的候选上限
+  # 文档切分参数
+  split:
+    chunk-size: 500     # 单个知识片段的最大字符数
+    overlap: 100        # 相邻片段的重叠字符数
+  # 网页文档加载（把真实网页正文抓进知识库）
+  web:
+    enabled: true         # 是否抓取网页入库
+    urls: [https://javaguide.cn/]              # 要抓取的页面列表，一行一个；留空则跳过抓取
+    cache-dir: docs/web   # 正文缓存目录（有缓存即复用；删掉缓存文件即重新抓取）
+    timeout-ms: 10000
+    delay-ms: 500         # 相邻两次抓取的间隔，避免给目标站点压力
+    user-agent: Mozilla/5.0 (compatible; salary-leap-rag/1.0)
 
 

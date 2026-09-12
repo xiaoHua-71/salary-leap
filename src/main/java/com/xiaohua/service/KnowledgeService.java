@@ -6,21 +6,23 @@ import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.scoring.ScoringModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
-import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 /**
  * 知识检索服务：RAG 的「R」（Retrieval）。
  *
- * <p>两步检索：先用向量做「召回」（取较多候选），再用 rerank 模型「精排」（取最相关的几个）。
+ * <p>三步检索：先「混合召回」（向量查语义 + BM25 查字面关键词），
+ * 再用 RRF 把两路结果融合成一份候选，最后用 rerank 模型「精排」取最相关的几个。
  * 拼成一段文本返回给调用方，塞进提示词（Augment）后交给模型生成。</p>
  */
 @Service
@@ -39,6 +41,9 @@ public class KnowledgeService {
     @Resource
     private ScoringModel scoringModel;
 
+    @Resource
+    private Bm25Index bm25Index;
+
     /** 是否开启 rerank 精排 */
     @Value("${rag.rerank.enabled:true}")
     private boolean rerankEnabled;
@@ -50,6 +55,22 @@ public class KnowledgeService {
     /** 最终交给大模型的片段数量 */
     @Value("${rag.retrieve.top-k:3}")
     private int topK;
+
+    /** 是否开启混合检索（BM25 关键词 + 向量双路召回） */
+    @Value("${rag.hybrid.enabled:true}")
+    private boolean hybridEnabled;
+
+    /** BM25 这一路召回多少候选 */
+    @Value("${rag.hybrid.recall:20}")
+    private int bm25Recall;
+
+    /** RRF 平滑常数 */
+    @Value("${rag.hybrid.rrf-k:60}")
+    private int rrfK;
+
+    /** 融合去重后、送进 rerank 前的候选上限 */
+    @Value("${rag.hybrid.max-candidates:30}")
+    private int maxCandidates;
 
     /**
      * 根据查询检索相关知识片段，拼接成一段文本返回。
@@ -71,25 +92,18 @@ public class KnowledgeService {
             return cached;
         }
         try {
-            // 1. 把查询也向量化 —— 必须用和知识库同一个模型，才能在同一空间比较相似度
-            Embedding queryEmbedding = embeddingModel.embed(query).content();//拿到向量化后的数据
+            // 1. 双路召回：向量查「语义相近」，BM25 查「字面命中关键词」
+            List<TextSegment> vectorCandidates = vectorRecall(query);
+            List<TextSegment> keywordCandidates = keywordRecall(query);
 
-            // 2. 向量检索（召回）：取较多候选，交给 rerank 精排
-            EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
-                    .queryEmbedding(queryEmbedding)
-                    .maxResults(recall)
-                    .minScore(0.2)
-                    .build();
-            EmbeddingStore<TextSegment> store = ragIndexService.getEmbeddingStore();
-            EmbeddingSearchResult<TextSegment> result = store.search(request);
-
-            List<TextSegment> candidates = result.matches().stream()
-                    .map(EmbeddingMatch::embedded)
-                    .collect(Collectors.toList());
+            // 2. RRF 融合两路结果，去重成一份候选
+            List<TextSegment> candidates = fuse(vectorCandidates, keywordCandidates);
             if (candidates.isEmpty()) {
                 log.info("查询 [{}] 未检索到相关知识", query);
                 return "";
             }
+            log.info("检索召回：向量 {} 条 / BM25 {} 条 / 融合 {} 条 → rerank 取 top{}",
+                    vectorCandidates.size(), keywordCandidates.size(), candidates.size(), topK);
 
             // 3. rerank 精排，取最相关的 topK 段
             List<TextSegment> top = rerank(query, candidates);
@@ -105,6 +119,81 @@ public class KnowledgeService {
             // 兜底降级：检索环节任何异常都不影响出题，退回"无知识"出题
             log.warn("知识检索失败，将退回纯模型出题: {}", e.getMessage(), e);
             return "";
+        }
+    }
+
+    /**
+     * 向量召回：把查询向量化后，到 Milvus 里找语义相近的片段。
+     *
+     * <p>失败只记 warn 返回空列表，交由 BM25 那一路顶上 —— 比「任一路挂了就整体返回空」更抗故障。</p>
+     */
+    private List<TextSegment> vectorRecall(String query) {
+        try {
+            // 查询必须用和知识库同一个 embedding 模型，才能在同一空间比较相似度
+            Embedding queryEmbedding = embeddingModel.embed(query).content();
+            EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
+                    .queryEmbedding(queryEmbedding)
+                    .maxResults(recall)
+                    .minScore(0.2)
+                    .build();
+            EmbeddingStore<TextSegment> store = ragIndexService.getEmbeddingStore();
+            return store.search(request).matches().stream()
+                    .map(EmbeddingMatch::embedded)
+                    .collect(Collectors.toList());
+        } catch (Exception e) {
+            log.warn("向量召回失败，本次仅用 BM25 关键词结果: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * BM25 关键词召回：捞出字面命中查询词/术语的片段。
+     *
+     * <p>关闭混合检索或索引为空时返回空列表。</p>
+     */
+    private List<TextSegment> keywordRecall(String query) {
+        if (!hybridEnabled) {
+            return List.of();
+        }
+        try {
+            return bm25Index.search(query, bm25Recall);
+        } catch (Exception e) {
+            log.warn("BM25 召回失败，本次仅用向量结果: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * RRF（Reciprocal Rank Fusion）倒数排名融合：只看两路里各自的排名，不看原始分数。
+     *
+     * <p>{@code score(d) = Σ 1 / (k + rank)}，rank 从 1 开始。用排名而非分数，
+     * 天然免疫量纲差异：向量余弦分在 [-1,1]、BM25 分无上界，直接相加得先归一化再调权重，
+     * 而 RRF 只依赖「谁排在前面」，无需任何调参。</p>
+     *
+     * <p>去重按文本（trim 后）而非对象身份：向量侧是 Milvus 反序列化出的新对象，
+     * 和 BM25 索引里的实例不是同一个，比 identity 必然去不掉。</p>
+     */
+    private List<TextSegment> fuse(List<TextSegment> vectorCandidates, List<TextSegment> keywordCandidates) {
+        Map<String, Double> scores = new LinkedHashMap<>();
+        Map<String, TextSegment> byText = new LinkedHashMap<>();
+        accumulateRrf(vectorCandidates, scores, byText);
+        accumulateRrf(keywordCandidates, scores, byText);
+        return scores.entrySet().stream()
+                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+                .limit(maxCandidates)
+                .map(entry -> byText.get(entry.getKey()))
+                .collect(Collectors.toList());
+    }
+
+    private void accumulateRrf(List<TextSegment> candidates,
+                              Map<String, Double> scores,
+                              Map<String, TextSegment> byText) {
+        for (int i = 0; i < candidates.size(); i++) {
+            TextSegment segment = candidates.get(i);
+            String key = segment.text().trim();
+            // k 起平滑作用：越大越削弱「两路都排第一」的叠加优势，60 是原论文默认值
+            scores.merge(key, 1.0 / (rrfK + i + 1), Double::sum);
+            byText.putIfAbsent(key, segment);
         }
     }
 

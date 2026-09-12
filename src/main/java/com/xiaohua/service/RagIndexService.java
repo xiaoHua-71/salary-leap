@@ -1,8 +1,10 @@
 package com.xiaohua.service;
 
 import com.xiaohua.model.vo.RebuildStatusVO;
+import com.xiaohua.service.loader.WebPageLoader;
 import dev.langchain4j.community.model.dashscope.QwenEmbeddingModel;
 import dev.langchain4j.data.document.Document;
+import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.store.embedding.EmbeddingStore;
@@ -43,11 +45,35 @@ import java.util.concurrent.Executors;
 @Slf4j
 public class RagIndexService {
 
+    /** 随包发布的基础知识文件（classpath 下的相对路径） */
+    private static final List<String> CLASSPATH_DOCS = List.of(
+            "knowledge/java-backend.txt",
+            "knowledge/frontend.txt",
+            "knowledge/testing.txt");
+
     @Resource
     private QwenEmbeddingModel embeddingModel;
 
     @Resource
     private RetrievalCache retrievalCache;
+
+    @Resource
+    private Bm25Index bm25Index;
+
+    @Resource
+    private WebPageLoader webPageLoader;
+
+    /** 单个知识片段的最大字符数 */
+    @Value("${rag.split.chunk-size:500}")
+    private int chunkSize;
+
+    /** 相邻片段的重叠字符数 */
+    @Value("${rag.split.overlap:100}")
+    private int overlap;
+
+    /** 要抓取入库的网页地址（rag.web.urls，可为空） */
+    @Value("${rag.web.urls:}")
+    private List<String> webUrls;
 
     @Value("${milvus.host:localhost}")
     private String host;
@@ -89,13 +115,23 @@ public class RagIndexService {
             currentCollectionName = newCollectionName();
         }
         embeddingStore = buildStore(currentCollectionName);
+        // 知识片段只切一次：向量入库和 BM25 索引共用同一份，避免两份切分结果对不上
+        List<TextSegment> segments = loadAndSplit();
         long rowCount = countRows(currentCollectionName);
         if (rowCount > 0) {
             log.info("集合 [{}] 已有 {} 条向量，跳过入库", currentCollectionName, rowCount);
+            if (rowCount != segments.size()) {
+                log.warn("集合 [{}] 有 {} 条向量，但知识库文件切出 {} 段，两者可能不一致；"
+                                + "改过 knowledge/*.txt 后请调 POST /rag/rebuild 重建",
+                        currentCollectionName, rowCount, segments.size());
+            }
         } else {
             log.info("集合 [{}] 为空，开始入库...", currentCollectionName);
-            ingest(embeddingStore);
+            ingest(embeddingStore, segments);
         }
+        // BM25 索引是纯内存的、进程重启就没了，所以必须无条件重建
+        // （不能只在「入库」分支里建，否则复用上次集合时 BM25 会是空的）
+        bm25Index.rebuild(segments);
         saveCurrentCollectionName(currentCollectionName);
     }
 
@@ -140,8 +176,14 @@ public class RagIndexService {
         try {
             String newName = newCollectionName();
             log.info("开始重建索引，新集合 [{}]", newName);
+            List<TextSegment> segments = loadAndSplit();
             MilvusEmbeddingStore fresh = buildStore(newName);
-            ingest(fresh);
+            // 向量和 BM25 都先建好，成功后才切 live 引用；中途失败线上索引原封不动
+            ingest(fresh, segments);
+            bm25Index.rebuild(segments);
+            // 两次 volatile 写紧挨着，中间存在「新 BM25 + 旧向量」的极小窗口。
+            // 重建读的是同一批知识库文件、两套语料内容一致，加上融合时按文本去重，
+            // 该窗口最多让某一次检索的排序略脏，不值得为此引入额外的持有类重构。
             this.currentCollectionName = newName;
             this.embeddingStore = fresh;
             saveCurrentCollectionName(newName);
@@ -197,22 +239,36 @@ public class RagIndexService {
                 .build();
     }
 
-    private void ingest(MilvusEmbeddingStore store) {
-        List<TextSegment> segments = loadAndSplit();
+    private void ingest(MilvusEmbeddingStore store, List<TextSegment> segments) {
         store.addAll(embeddingModel.embedAll(segments).content(), segments);
         log.info("知识库入库完成，共 {} 段", segments.size());
     }
 
+    /**
+     * 汇总知识库的全部文档来源：内置 classpath 文本 + 抓取的网页正文。
+     *
+     * <p>每个文档都带来源元数据（网页用 {@code url}、内置文件用 {@code file_name}，
+     * 都是 LangChain4j 的约定键），切分器会把它复制到每个片段上，
+     * Milvus 自动存成 JSON 字段、检索时还原 —— 所以「这段知识出自哪」一路可查。</p>
+     */
+    private List<Document> loadDocuments() {
+        List<Document> documents = new ArrayList<>();
+        for (String path : CLASSPATH_DOCS) {
+            documents.add(Document.from(readClasspath(path), Metadata.from(Document.FILE_NAME, path)));
+        }
+        documents.addAll(webPageLoader.load(webUrls));
+        return documents;
+    }
+
     private List<TextSegment> loadAndSplit() {
-        List<Document> documents = List.of(
-                Document.from(readClasspath("knowledge/java-backend.txt")),
-                Document.from(readClasspath("knowledge/frontend.txt")),
-                Document.from(readClasspath("knowledge/testing.txt")));
-        var splitter = DocumentSplitters.recursive(300, 50);
+        List<Document> documents = loadDocuments();
+        var splitter = DocumentSplitters.recursive(chunkSize, overlap);
         List<TextSegment> segments = new ArrayList<>();
         for (Document doc : documents) {
             segments.addAll(splitter.split(doc));
         }
+        log.info("知识库加载完成：{} 个文档 → {} 个片段（chunk={}, overlap={}）",
+                documents.size(), segments.size(), chunkSize, overlap);
         return segments;
     }
 
