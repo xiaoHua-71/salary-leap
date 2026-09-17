@@ -86,20 +86,24 @@ public class WebPageLoader {
      *
      * <p>单个 URL 失败只记 warn 并跳过，不打断整批 —— 一个页面挂掉不该让整次入库失败。</p>
      *
-     * @return 带来源元数据的文档；未启用或列表为空时返回空列表
+     * <p><b>失败清单要单独交回去</b>：增量更新靠「清单里有、这次没加载出来」判断来源被删除，
+     * 如果分不清「页面被删了」和「这次没抓到」，网络一抖就会把索引里的正文删掉。</p>
+     *
+     * @return 加载结果：带来源元数据的文档 + 加载失败的 URL；未启用或列表为空时两者皆空
      */
-    public List<Document> load() {
+    public LoadResult load() {
         if (!enabled) {
             log.info("网页抓取已关闭（rag.web.enabled=false），跳过");
-            return List.of();
+            return new LoadResult(List.of(), List.of());
         }
         if (urls == null || urls.isEmpty()) {
             log.info("网页抓取未配置（rag.web.urls 为空），跳过");
-            return List.of();
+            return new LoadResult(List.of(), List.of());
         }
 
         Path dir = Paths.get(cacheDir);
         List<Document> documents = new ArrayList<>();
+        List<String> failedUrls = new ArrayList<>();
         boolean fetchedAny = false;
         for (String rawUrl : urls) {
             String url = rawUrl == null ? "" : rawUrl.trim();
@@ -127,15 +131,17 @@ public class WebPageLoader {
                 }
                 if (body.isBlank()) {
                     log.warn("页面正文为空，跳过: {}", source);
+                    failedUrls.add(url);
                     continue;
                 }
                 documents.add(toDocument(source, body));
             } catch (Exception e) {
                 log.warn("网页加载失败，跳过该 URL [{}]: {}", url, e.getMessage());
+                failedUrls.add(url);
             }
         }
         log.info("网页文档加载完成：{}/{} 个 URL 成功", documents.size(), urls.size());
-        return documents;
+        return new LoadResult(documents, failedUrls);
     }
 
     /**
@@ -265,5 +271,13 @@ public class WebPageLoader {
 
     /** 缓存内容：来源 + 正文 */
     record CachedPage(String source, String body) {
+    }
+
+    /**
+     * 加载结果：成功拿出来正文的文档 + 没拿到的 URL。
+     *
+     * <p>{@code failedUrls} 不能丢 —— 增量更新要靠它区分「来源被移除了」和「这次没抓到」。</p>
+     */
+    public record LoadResult(List<Document> documents, List<String> failedUrls) {
     }
 }

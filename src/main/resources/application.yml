@@ -111,6 +111,11 @@ milvus:
   port: 19530
   collection-name: level_knowledge
   dimension: 1536
+  # 两个记录「索引里到底有什么」的本地文件：
+  #   collection-meta-file：当前生效的集合名 + 段数（重启据此复用集合，避免重复入库）
+  #   manifest-file：每个来源的正文指纹 + 片段数（增量更新的依据：指纹没变就不重新 embedding）
+  collection-meta-file: milvus-current-collection.txt
+  manifest-file: milvus-index-manifest.txt
 # RAG 检索配置
 rag:
   retrieve:
