@@ -1,5 +1,6 @@
 package com.xiaohua.service;
 
+import com.xiaohua.model.ai.RetrieveOptions;
 import dev.langchain4j.community.model.dashscope.QwenEmbeddingModel;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.embedding.Embedding;
@@ -34,10 +35,22 @@ import java.util.stream.IntStream;
  * </ol>
  *
  * <p>拼成一段文本返回给调用方，塞进提示词（Augment）后交给模型生成。</p>
+ *
+ * <p><b>两个入口，别混用</b>：</p>
+ * <ul>
+ *   <li>{@link #retrieve(String)} —— <b>生产入口</b>。带缓存、任何异常都降级成空字符串，
+ *       保证出题主流程不被检索拖垮。出题只该调这个。</li>
+ *   <li>{@link #retrieveSegments(String, RetrieveOptions, boolean)} —— <b>评估入口</b>。
+ *       参数可传、绕开缓存、可以选择不吃降级。离线评估必须看到真实链路和真实失败，
+ *       否则变体之间会互相命中缓存、失败又全被兜底吞掉，指标全是假的。</li>
+ * </ul>
  */
 @Service
 @Slf4j
 public class KnowledgeService {
+
+    /** 向量相似度门槛。硬编码不可配，见 knowledge/23 的「代码里硬编码、暂不可配的」 */
+    private static final double MIN_SCORE = 0.2;
 
     @Resource
     private RagIndexService ragIndexService;
@@ -109,40 +122,8 @@ public class KnowledgeService {
             return cached;
         }
         try {
-            // 1. 查询改写：把方向标签扩展成若干条具体主题查询（原查询始终在第一位）
-            List<String> queries = queryRewriter.rewrite(query);
-
-            // 2. 每条查询各做一次双路召回：向量查「语义相近」，BM25 查「字面命中关键词」
-            Map<String, Double> scores = new LinkedHashMap<>();
-            Map<String, TextSegment> byText = new LinkedHashMap<>();
-            int vectorTotal = 0;
-            int keywordTotal = 0;
-            for (String currentQuery : queries) {
-                List<TextSegment> vectorCandidates = vectorRecall(currentQuery);
-                List<TextSegment> keywordCandidates = keywordRecall(currentQuery);
-                vectorTotal += vectorCandidates.size();
-                keywordTotal += keywordCandidates.size();
-                accumulateRrf(vectorCandidates, scores, byText);
-                accumulateRrf(keywordCandidates, scores, byText);
-            }
-
-            // 3. 按融合分降序取候选：多路都排在前面的片段会自然浮上来
-            List<TextSegment> candidates = topCandidates(scores, byText);
-            if (candidates.isEmpty()) {
-                log.info("查询 [{}] 未检索到相关知识", query);
-                return "";
-            }
-            log.info("检索召回：{} 条查询 → 向量 {} 条 / BM25 {} 条 / 融合 {} 条 → rerank 取 top{}",
-                    queries.size(), vectorTotal, keywordTotal, candidates.size(), topK);
-
-            // 4. rerank 用**原查询**精排 —— 评判标准始终是用户真正要的那个方向
-            List<TextSegment> top = rerank(query, candidates);
-
-            // 4. 把片段原文拼起来（Augment 的原料）
-            String joined = top.stream()
-                    .map(TextSegment::text)
-                    .collect(Collectors.joining("\n\n---\n\n"));
-            // 5. 回写缓存
+            String joined = join(retrieveSegments(query, defaultOptions(), false));
+            // 回写缓存。空结果不缓存（RetrievalCache 内部判断），避免把暂时性的失败固化下来
             retrievalCache.put(query, joined);
             return joined;
         } catch (Exception e) {
@@ -153,24 +134,95 @@ public class KnowledgeService {
     }
 
     /**
+     * 当前生产配置，从 {@code @Value} 字段和 {@link QueryRewriter} 组装。
+     *
+     * <p>评估拿它当基线：变体都在这个基础上改一两个开关，所以 「all-on」变体
+     * 跑出来的指标就是线上真实水平。</p>
+     */
+    public RetrieveOptions defaultOptions() {
+        return new RetrieveOptions(queryRewriter.isEnabled(), queryRewriter.getCount(),
+                hybridEnabled, bm25Recall, rrfK, maxCandidates,
+                rerankEnabled, recall, topK, maxPerSource);
+    }
+
+    /**
+     * 检索出知识片段（带来源元数据），**不读也不写缓存**。
+     *
+     * <p>给离线评估用：评估要反复跑同一批查询的不同参数组合，命中缓存会让
+     * 后一个变体直接拿到前一个变体的结果，指标全错。</p>
+     *
+     * <p>多路召回的降级链仍然保留（某一路失败只记 warn），这是生产行为的一部分；
+     * 想让失败暴露出来就传 {@code strict = true}，此时异常直接抛出、不被吞掉 ——
+     * 否则「DashScope 挂了」和「真实检索不到」在报告里长得一模一样。</p>
+     *
+     * @param query   查询文本
+     * @param options 本次检索的参数
+     * @param strict  true 表示任何一路失败都抛出异常，而不是降级
+     * @return 检索到的片段（按相关性排序）；无结果返回空列表
+     */
+    public List<TextSegment> retrieveSegments(String query, RetrieveOptions options, boolean strict) {
+        // 1. 查询改写：把方向标签扩展成若干条具体主题查询（原查询始终在第一位）
+        List<String> queries = queryRewriter.rewrite(query, options.rewrite(), options.rewriteCount());
+
+        // 2. 每条查询各做一次双路召回：向量查「语义相近」，BM25 查「字面命中关键词」
+        Map<String, Double> scores = new LinkedHashMap<>();
+        Map<String, TextSegment> byText = new LinkedHashMap<>();
+        int vectorTotal = 0;
+        int keywordTotal = 0;
+        for (String currentQuery : queries) {
+            List<TextSegment> vectorCandidates = vectorRecall(currentQuery, options, strict);
+            List<TextSegment> keywordCandidates = keywordRecall(currentQuery, options, strict);
+            vectorTotal += vectorCandidates.size();
+            keywordTotal += keywordCandidates.size();
+            accumulateRrf(vectorCandidates, scores, byText, options.rrfK());
+            accumulateRrf(keywordCandidates, scores, byText, options.rrfK());
+        }
+
+        // 3. 按融合分降序取候选：多路都排在前面的片段会自然浮上来
+        List<TextSegment> candidates = topCandidates(scores, byText, options.maxCandidates());
+        if (candidates.isEmpty()) {
+            log.info("查询 [{}] 未检索到相关知识", query);
+            return List.of();
+        }
+        log.info("检索召回：{} 条查询 → 向量 {} 条 / BM25 {} 条 / 融合 {} 条 → rerank 取 top{}",
+                queries.size(), vectorTotal, keywordTotal, candidates.size(), options.topK());
+
+        // 4. rerank 用**原查询**精排 —— 评判标准始终是用户真正要的那个方向
+        return rerank(query, candidates, options, strict);
+    }
+
+    /**
+     * 把片段原文拼起来（Augment 的原料）。
+     */
+    static String join(List<TextSegment> segments) {
+        return segments.stream()
+                .map(TextSegment::text)
+                .collect(Collectors.joining("\n\n---\n\n"));
+    }
+
+    /**
      * 向量召回：把查询向量化后，到 Milvus 里找语义相近的片段。
      *
-     * <p>失败只记 warn 返回空列表，交由 BM25 那一路顶上 —— 比「任一路挂了就整体返回空」更抗故障。</p>
+     * <p>失败只记 warn 返回空列表，交由 BM25 那一路顶上 —— 比「任一路挂了就整体返回空」更抗故障。
+     * {@code strict} 下改为抛异常，让评估看得见失败。</p>
      */
-    private List<TextSegment> vectorRecall(String query) {
+    private List<TextSegment> vectorRecall(String query, RetrieveOptions options, boolean strict) {
         try {
             // 查询必须用和知识库同一个 embedding 模型，才能在同一空间比较相似度
             Embedding queryEmbedding = embeddingModel.embed(query).content();
             EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
                     .queryEmbedding(queryEmbedding)
-                    .maxResults(recall)
-                    .minScore(0.2)
+                    .maxResults(options.vectorRecall())
+                    .minScore(MIN_SCORE)
                     .build();
             EmbeddingStore<TextSegment> store = ragIndexService.getEmbeddingStore();
             return store.search(request).matches().stream()
                     .map(EmbeddingMatch::embedded)
                     .collect(Collectors.toList());
         } catch (Exception e) {
+            if (strict) {
+                throw new IllegalStateException("向量召回失败: " + e.getMessage(), e);
+            }
             log.warn("向量召回失败，本次仅用 BM25 关键词结果: {}", e.getMessage());
             return List.of();
         }
@@ -181,22 +233,27 @@ public class KnowledgeService {
      *
      * <p>关闭混合检索或索引为空时返回空列表。</p>
      */
-    private List<TextSegment> keywordRecall(String query) {
-        if (!hybridEnabled) {
+    private List<TextSegment> keywordRecall(String query, RetrieveOptions options, boolean strict) {
+        if (!options.hybrid()) {
             return List.of();
         }
         try {
-            return bm25Index.search(query, bm25Recall);
+            return bm25Index.search(query, options.bm25Recall());
         } catch (Exception e) {
+            if (strict) {
+                throw new IllegalStateException("BM25 召回失败: " + e.getMessage(), e);
+            }
             log.warn("BM25 召回失败，本次仅用向量结果: {}", e.getMessage());
             return List.of();
         }
     }
 
     /**
-     * 按 RRF 融合分降序取出候选，截断到 {@code max-candidates}。
+     * 按 RRF 融合分降序取出候选，截断到 {@code maxCandidates}。
      */
-    private List<TextSegment> topCandidates(Map<String, Double> scores, Map<String, TextSegment> byText) {
+    private List<TextSegment> topCandidates(Map<String, Double> scores,
+                                           Map<String, TextSegment> byText,
+                                           int maxCandidates) {
         return scores.entrySet().stream()
                 .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
                 .limit(maxCandidates)
@@ -220,7 +277,8 @@ public class KnowledgeService {
      */
     private void accumulateRrf(List<TextSegment> candidates,
                               Map<String, Double> scores,
-                              Map<String, TextSegment> byText) {
+                              Map<String, TextSegment> byText,
+                              int rrfK) {
         for (int i = 0; i < candidates.size(); i++) {
             TextSegment segment = candidates.get(i);
             String key = segment.text().trim();
@@ -239,8 +297,11 @@ public class KnowledgeService {
      *
      * <p>四条返回路径都走 {@link #selectDiverse}：选出前 topK 时优先让**不同来源**的片段占位。</p>
      */
-    private List<TextSegment> rerank(String query, List<TextSegment> segments) {
-        if (!rerankEnabled || segments.size() <= topK) {
+    private List<TextSegment> rerank(String query, List<TextSegment> segments,
+                                    RetrieveOptions options, boolean strict) {
+        int topK = options.topK();
+        int maxPerSource = options.maxPerSource();
+        if (!options.rerank() || segments.size() <= topK) {
             return selectDiverse(segments, topK, maxPerSource);
         }
         try {
@@ -255,6 +316,9 @@ public class KnowledgeService {
                     .collect(Collectors.toList());
             return selectDiverse(ordered, topK, maxPerSource);
         } catch (Exception e) {
+            if (strict) {
+                throw new IllegalStateException("Rerank 失败: " + e.getMessage(), e);
+            }
             log.warn("Rerank 失败，退回向量检索原始顺序: {}", e.getMessage());
             return selectDiverse(segments, topK, maxPerSource);
         }
@@ -321,7 +385,7 @@ public class KnowledgeService {
      * <p>没有来源元数据的片段返回 null —— 这些片段不参与去重限制，
      * 否则一堆「来源未知」的片段会被当成同一篇而互相挤掉。</p>
      */
-    static String sourceOf(TextSegment segment) {
+    public static String sourceOf(TextSegment segment) {
         if (segment.metadata() == null) {
             return null;
         }

@@ -139,6 +139,18 @@ rag:
   rewrite:
     enabled: true       # 是否开启查询改写
     count: 4            # 最多扩展出几条子查询（不含原查询）
+  # 离线检索评估（档位三：评估集 + 指标），用法见 knowledge/25-评估集与指标.md
+  eval:
+    # 评估集：查询 → 期望命中的文章。放文件系统而不是 classpath —— 这是要反复打磨的东西，
+    # 改完立刻生效，不用重新编译（classpath 下 rag-eval/eval-set.json 只是兜底）
+    eval-set-file: docs/rag-eval/eval-set.json
+    report-dir: docs/rag-eval/reports
+    # 默认跑哪几个变体。变体定义在 EvalVariant 枚举里（all-on / no-rewrite / no-hybrid /
+    # no-rerank / vector-only / no-diversity / topk-5）。默认只跑两组是因为成本：
+    # 一组 30 条查询 ≈ 150 次 embedding + 30 次改写 + 30 次 rerank，约几分钟
+    default-variants:
+      - all-on          # 生产基线，报告第一行就是线上真实水平
+      - vector-only     # 改造前的形态（裸向量），用来量出「混合检索 + rerank」总共值多少
   # 文档切分参数
   split:
     chunk-size: 500     # 单个知识片段的最大字符数

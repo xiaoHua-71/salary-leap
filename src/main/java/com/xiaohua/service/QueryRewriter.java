@@ -39,13 +39,38 @@ public class QueryRewriter {
     @Value("${rag.rewrite.count:4}")
     private int count = 4;
 
+    /** 供 {@code KnowledgeService} 组装默认检索参数（评估的基线） */
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    /** 供 {@code KnowledgeService} 组装默认检索参数（评估的基线） */
+    public int getCount() {
+        return count;
+    }
+
     /**
-     * 改写查询。
+     * 用配置里的开关改写查询。
      *
      * @param query 原始查询（学习方向标签）
      * @return 待召回的查询列表，**第一条一定是原查询**；关闭或失败时只有原查询
      */
     public List<String> rewrite(String query) {
+        return rewrite(query, enabled, count);
+    }
+
+    /**
+     * 用指定的开关改写查询。
+     *
+     * <p>离线评估要对比「开改写 / 关改写」两组指标，而 yml 里的开关是启动时定死的，
+     * 所以把开关做成参数传进来 —— 评估可以逐次指定，生产路径仍走上面那个重载。</p>
+     *
+     * @param query   原始查询
+     * @param enabled 是否开启改写
+     * @param count   最多扩展出几条子查询（不含原查询）
+     * @return 待召回的查询列表，**第一条一定是原查询**；关闭或失败时只有原查询
+     */
+    public List<String> rewrite(String query, boolean enabled, int count) {
         Set<String> queries = new LinkedHashSet<>();
         queries.add(query);
         if (!enabled || count <= 0) {

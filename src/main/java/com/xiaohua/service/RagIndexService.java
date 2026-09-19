@@ -33,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -167,6 +168,36 @@ public class RagIndexService {
      */
     public EmbeddingStore<TextSegment> getEmbeddingStore() {
         return embeddingStore;
+    }
+
+    /**
+     * 当前生效的集合名。评估报告记下来做环境快照 —— 评估中途若发生重建，
+     * 前后两次读到的集合名不一致，就说明这批指标不可比。
+     */
+    public String getCurrentCollectionName() {
+        return currentCollectionName;
+    }
+
+    /**
+     * 当前索引里的全部来源（网页是 {@code url}，内置文件是 {@code file_name}）。
+     *
+     * <p>离线评估靠它判断「期望的那篇文章到底在不在库里」，从而把未命中分成
+     * <b>数据缺失</b>（只能补数据）和 <b>检索没捞到</b>（才轮到调检索）两类。</p>
+     *
+     * <p>信息来源是<b>来源清单文件</b>：它本来就是本项目对「索引里有什么」的唯一权威记录
+     * （见 {@link IndexManifest}），没必要再去遍历 Milvus。</p>
+     *
+     * @return 全部来源值；清单缺失时返回空集合（调用方按「不知道」处理）
+     */
+    public Set<String> currentSources() {
+        IndexManifest manifest = loadManifest();
+        if (manifest == null) {
+            log.warn("读不到来源清单，本次评估无法区分「数据缺失」和「检索没捞到」");
+            return Set.of();
+        }
+        return manifest.sources().keySet().stream()
+                .map(IndexManifest.SourceKey::value)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     /**
