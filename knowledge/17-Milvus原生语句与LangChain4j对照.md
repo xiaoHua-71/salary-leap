@@ -20,7 +20,7 @@ MySQL 里你写 SQL 字符串，数据库有「SQL 解析器」把它翻译成�
 
 但它们**照样有 DDL / DML / DCL 这三类操作**，只是「语句」变成 HTTP 请求或 SDK 方法调用。
 
-> 本项目的语言是 Java，走的是 **gRPC SDK**：`io.milvus.client.MilvusServiceClient`（milvus-sdk-java **2.5.9**，即「v1 老 SDK」）。这一点很关键，见第七节的版本坑。
+> 本项目的语言是 Java，走的是 **gRPC SDK**：`io.milvus.client.MilvusServiceClient`（经 `langchain4j-milvus 1.4.0-beta10` 传递引入 milvus-sdk-java **2.5.9**，即「v1 老 SDK」）。这一点很关键，见第七节的版本坑。
 
 ---
 
@@ -43,6 +43,9 @@ MySQL 里你写 SQL 字符串，数据库有「SQL 解析器」把它翻译成�
 - `id` → `VarChar`，`max_length = 36`（放 UUID）
 - `text` → `VarChar`，`max_length = 65535`
 
+> 本项目的主键**不是随机 UUID，而是算出来的 v3 UUID**（`UUID.nameUUIDFromBytes(来源 + 序号)`），
+> 所以 36 字符刚好用满。为什么要确定性主键，见 [24-增量更新.md](24-增量更新.md) §四。
+
 ---
 
 ## 三、DDL：建库 / 建表 / 建索引
@@ -56,7 +59,7 @@ MySQL 里你写 SQL 字符串，数据库有「SQL 解析器」把它翻译成�
 | 加载到内存 | ——（MySQL 无此概念） | `POST /v2/vectordb/collections/load` | `loadCollection(param)` | **builder 自动 load** |
 | 列出集合 | `SHOW TABLES` | `POST /v2/vectordb/collections/list` | `showCollections()` | 无（用原生） |
 | 看结构 | `DESC t` | `POST /v2/vectordb/collections/describe` | `describeCollection(...)` | 无（用原生） |
-| 行数统计 | `SELECT COUNT(*)` | `POST /v2/vectordb/collections/get_stats` | `getCollectionStatistics(...)` | **⚠ 本项目用原生**（见 3.4） |
+| 行数统计 | `SELECT COUNT(*)` | `POST /v2/vectordb/collections/get_stats` | `getCollectionStatistics(...)` | **不用**：口径只算已 flush 的数据（见 3.4） |
 | 删集合 | `DROP TABLE t` | `POST /v2/vectordb/collections/drop` | `dropCollection(param)` | 无（本项目刻意不用） |
 
 > **「load」是 Milvus 独有概念**：集合数据平时躺在磁盘，检索前必须 `load` 进内存，否则报 `collection not loaded`。MySQL 没有这一步。
@@ -97,7 +100,7 @@ curl -X POST "http://localhost:19530/v2/vectordb/collections/load" \
 
 ### 3.4 本项目的做法：DDL 全部藏进 builder
 
-`RagIndexService.java:110-121`：
+`RagIndexService.java:416-428`：
 
 ```java
 return MilvusEmbeddingStore.builder()
@@ -106,6 +109,7 @@ return MilvusEmbeddingStore.builder()
         .dimension(dimension)
         .metricType(MetricType.IP)     // 度量：内积
         .indexType(IndexType.FLAT)     // 索引：暴力检索
+        .consistencyLevel(ConsistencyLevelEnum.BOUNDED)  // 见 24 §七
         .build();                       // ← 这一刻，LangChain4j 内部把上面 3 条 DDL 全做了
 ```
 
@@ -116,18 +120,27 @@ return MilvusEmbeddingStore.builder()
 
 **所以本项目代码里看不到任何 DDL 语句**——不是不需要，是框架替你写了。
 
-但有一处**绕开框架、直接用原生 SDK**，`RagIndexService.java:142-161`：
+#### 曾经的例外：`countRows()`，已被刻意删掉
+
+改造那阵子这里**确实有一处绕开框架、直接用原生 SDK** 查行数：
 
 ```java
-MilvusServiceClient client = new MilvusServiceClient(
-        ConnectParam.newBuilder().withHost(host).withPort(port).build());
+// 已删除的写法，留作教材
 R<GetCollectionStatisticsResponse> resp = client.getCollectionStatistics(
-        GetCollectionStatisticsParam.newBuilder()
-                .withCollectionName(collectionName).build());
-// 从 statsList 里取 row_count
+        GetCollectionStatisticsParam.newBuilder().withCollectionName(collectionName).build());
+// 从 statsList 里取 row_count，用它判断「集合是不是空的」
 ```
 
-这是**「DDL 里的统计查询」**：LangChain4j 的 `EmbeddingStore` 接口没有「查行数」方法，所以只能自己 new 一个原生客户端来问。**这就是「框架盖不住时，回退到原生 API」的典型场景。**
+它踩的坑值得记住：**`row_count` 只统计「已 flush」的数据**，而
+`MilvusEmbeddingStore.addAll()`（内部 `autoFlushOnInsert` 默认 false）**不触发 flush**。
+于是刚灌完 2929 段的集合，统计出来是 **0** → 重启时被判成「空集合」→ **把整个知识库又灌了一遍**。
+
+结论：**入库状态不能问 Milvus，只能问自己**。现在改用两个本地文件
+（`milvus-current-collection.txt`：集合名 + 段数；`milvus-index-manifest.txt`：每个来源的指纹 + 段数），
+完全不依赖 Milvus 的内部行为。详见 [24-增量更新.md](24-增量更新.md)。
+
+> 这也解释了为什么现在 `RagIndexService` 里**一处原生调用都没有**：
+> 需要的 add / search / remove 三件事，LangChain4j 的 `EmbeddingStore` 接口都有。
 
 ---
 
@@ -137,14 +150,24 @@ R<GetCollectionStatisticsResponse> resp = client.getCollectionStatistics(
 
 | 目的 | MySQL SQL | Milvus 原生 REST v2 | Milvus gRPC SDK（Java） | 本项目 LangChain4j |
 |------|-----------|--------------------|------------------------|-------------------|
-| 插入 | `INSERT INTO t VALUES (...)` | `POST /v2/vectordb/entities/insert` | `insert(param)` | `store.add()` / `store.addAll()` |
-| 更新 | `UPDATE t SET ... WHERE ...` | **没有 UPDATE！** 用 upsert（主键存在则覆盖） | `upsert(param)` | `store.add(id, embedding, segment)`（同 id 覆盖） |
-| 删除 | `DELETE FROM t WHERE ...` | `POST /v2/vectordb/entities/delete` | `delete(param)` | `store.remove(id)` / `removeAll(ids)` |
+| 插入 | `INSERT INTO t VALUES (...)` | `POST /v2/vectordb/entities/insert` | `insert(param)` | `store.addAll(ids, embeddings, segments)` |
+| 更新 | `UPDATE t SET ... WHERE ...` | **没有 UPDATE！** 只能 `upsert`（内部=删+插） | `upsert(param)` | **框架没暴露 upsert**，自己写「先删后插」 |
+| 删除 | `DELETE FROM t WHERE ...` | `POST /v2/vectordb/entities/delete` | `delete(param)` | `store.removeAll(ids)`（按来源批量删） |
 | **向量检索** | **无对应** | `POST /v2/vectordb/entities/search` | `search(param)` | `store.search(EmbeddingSearchRequest)` |
 | 标量查询 | `SELECT ... WHERE` | `POST /v2/vectordb/entities/query` | `query(param)` | 只能通过 `search` 的 `filter` 间接用 |
-| 按主键取 | `SELECT ... WHERE id IN (...)` | `POST /v2/vectordb/entities/get` | `get(param)` | 无（用原生） |
+| 按主键取 | `SELECT ... WHERE id IN (...)` | `POST /v2/vectordb/entities/get` | `get(param)` | 无（不需要：主键能自己算出来） |
 
-**关键差异：Milvus 没有 `UPDATE`。** 想改一条，就用同主键 `upsert`（存在即覆盖，不存在即插入）。也没有 `JOIN`、没有 `GROUP BY`、没有 `ORDER BY`（排序只能靠相似度或主键）。
+**两个关键差异，一起看：**
+
+1. **Milvus 没有 `UPDATE`**。想改一条，原生只能用 `upsert`（内部就是「删旧行 + 插新行」）。
+2. **`insert` 不做主键去重** —— 主键上没有任何唯一约束，同一个 `id` 插两次就是**两行**，
+   检索时两行都会被召回。
+
+所以要注意一个坑：LangChain4j 的 `store.add(id, ...)` **不是「同 id 覆盖」，是「再插一行」**
+（它内部就是 `insert`）。本项目增量更新因此自己写「先删后插」，而且靠确定性主键算出要删哪些行
+—— 完整讲法见 [24-增量更新.md](24-增量更新.md) §四。
+
+也没有 `JOIN`、没有 `GROUP BY`、没有 `ORDER BY`（排序只能靠相似度或主键）。
 
 ### 4.2 原生插入（项目实际的数据形状）
 
@@ -154,25 +177,32 @@ LangChain4j 建集合时固定了 4 个字段，所以原生插入长这样：
 curl -X POST "http://localhost:19530/v2/vectordb/entities/insert" \
   -H "Content-Type: application/json" \
   -d '{
-    "collectionName": "level_knowledge_1788959387323",
+    "collectionName": "level_knowledge_1789208288062",
     "data": [{
-      "id": "a1b2c3d4-0000-0000-0000-000000000001",
+      "id": "6f1c0b7a-...-36 个字符（算出来的，不是随机）",
       "vector": [0.012, -0.34, 0.88, ...],       // 1536 个 float
       "text": "Redis 缓存穿透：查询一个不存在的 key...",
-      "metadata": { "source": "java-backend.txt" }
+      "metadata": { "file_name": "knowledge/java-backend.txt" }
     }]
   }'
 ```
 
-对应本项目 `RagIndexService.java:123-127`：
+对应本项目 `RagIndexService.java:430-440`（`ingestAll`）：
 
 ```java
-private void ingest(MilvusEmbeddingStore store) {
-    List<TextSegment> segments = loadAndSplit();
-    store.addAll(embeddingModel.embedAll(segments).content(), segments);
-    //  ↑ 框架内部就是上面那个 insert 请求；vector 来自 embedAll，text 来自 TextSegment
+private void ingestAll(MilvusEmbeddingStore store, List<LoadedSource> sources) {
+    for (LoadedSource source : sources) {
+        int count = source.segments().size();
+        store.addAll(source.key().embeddingIds(count),       // ← 显式主键：来源+序号算出来的
+                embeddingModel.embedAll(source.segments()).content(),
+                source.segments());
+    }
+    //  ↑ 每个来源一次 insert 请求；vector 来自 embedAll，text 来自 TextSegment，metadata 来自来源
 }
 ```
+
+> `metadata` 里的键是 LangChain4j 的约定：网页用 `url`、内置文件用 `file_name`
+> （即 `Document.URL` / `Document.FILE_NAME`），不是自定义的 `source`。
 
 **为什么是 4 个字段？** 这是 `MilvusEmbeddingStore` 的**固定默认 schema**（可用 builder 改名，但结构不变）：
 
@@ -193,33 +223,38 @@ private void ingest(MilvusEmbeddingStore store) {
 curl -X POST "http://localhost:19530/v2/vectordb/entities/search" \
   -H "Content-Type: application/json" \
   -d '{
-    "collectionName": "level_knowledge_1788959387323",
+    "collectionName": "level_knowledge_1789208288062",
     "data": [[0.012, -0.34, 0.88, ...]],      // 查询向量
     "annsField": "vector",
-    "limit": 3,
+    "limit": 20,
     "outputFields": ["text"],                  // 只回传原文，不回传向量（省流量）
     "searchParams": { "metricType": "IP" }
   }'
 ```
 
-本项目的 `KnowledgeService.java:42-48`：
+本项目的 `KnowledgeService.java:209-229`（`vectorRecall`）：
 
 ```java
+Embedding queryEmbedding = embeddingModel.embed(query).content();
 EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
         .queryEmbedding(queryEmbedding)
-        .maxResults(3)          // → 原生 limit / topK
-        .minScore(0.2)          // → 框架在客户端过滤
+        .maxResults(options.vectorRecall())   // → 原生 limit / topK；生产默认 20
+        .minScore(MIN_SCORE)                  // → 框架在客户端过滤；0.2，硬编码常量
         .build();
 EmbeddingStore<TextSegment> store = ragIndexService.getEmbeddingStore();
-EmbeddingSearchResult<TextSegment> result = store.search(request);
+return store.search(request).matches().stream()...
 ```
+
+> `maxResults` 现在是 **rerank 的召回数（20）**，不再是最终喂给大模型的条数 ——
+> 最终 top-3 由 BM25 召回 + RRF 融合 + rerank 精排决定，见
+> [23-检索链路与配置总览.md](23-检索链路与配置总览.md)。
 
 参数映射：
 
 | LangChain4j | Milvus 原生 | 说明 |
 |-------------|------------|------|
 | `queryEmbedding` | `data` | 查询向量 |
-| `maxResults(3)` | `limit: 3`（SDK 里叫 `topK`） | 取最像的前 3 条 |
+| `maxResults(N)` | `limit: N`（SDK 里叫 `topK`） | 取最像的前 N 条候选 |
 | `minScore(0.2)` | **无直接对应** | Milvus 原生用 `radius`/`range search` 表达「距离阈值」；LangChain4j 是**拿到结果后在 Java 里按 score 过滤** |
 | `filter(...)` | `expr: "..."` | 元数据过滤，由 `MilvusMetadataFilterMapper` 翻译成 Milvus 表达式 |
 | —— | `outputFields: ["text"]` | 框架默认只取 `text`（`retrieveEmbeddingsOnSearch` 控制是否连向量一起取） |
@@ -234,13 +269,19 @@ EmbeddingSearchResult<TextSegment> result = store.search(request);
 curl -X POST "http://localhost:19530/v2/vectordb/entities/query" \
   -H "Content-Type: application/json" \
   -d '{
-    "collectionName": "level_knowledge_1788959387323",
-    "filter": "metadata[\"source\"] == \"java-backend.txt\"",
-    "outputFields": ["text"]
+    "collectionName": "level_knowledge_1789208288062",
+    "filter": "metadata[\"file_name\"] == \"knowledge/java-backend.txt\"",
+    "outputFields": ["text"],
+    "limit": 200
   }'
 ```
 
-LangChain4j 的 `EmbeddingStore` 接口**没有暴露独立的 query 方法**——它只把「过滤」作为 `search` 的一个可选参数。所以「不按向量、纯按条件查数据」这件事，框架做不了，得回退原生。
+LangChain4j 的 `EmbeddingStore` 接口**没有暴露独立的 query 方法**——它只把「过滤」作为 `search`
+的一个可选参数。所以「不按向量、纯按条件查数据」这件事，框架做不了。
+
+> 但注意：**本项目现在并没有哪段业务代码需要它**（唯一曾经回退原生的 `countRows` 已被删掉，见 3.4）。
+> 这条 curl 的实际用途是**排查**——按来源数一下可见行数，确认增量更新「先删后插」删干净了没有。
+> 见 [24-增量更新.md](24-增量更新.md) §4.5。
 
 ---
 
@@ -255,12 +296,16 @@ Milvus 的过滤条件叫 **expr**，语法比 SQL 精简，但足够用：
 | 数值比较 | `score > 0.9` |
 | 集合包含 | `id in ["a", "b", "c"]` |
 | 模糊匹配（前缀） | `text like "Redis%"` |
-| JSON 取字段 | `metadata["source"] == "java-backend.txt"` |
+| JSON 取字段 | `metadata["file_name"] == "knowledge/java-backend.txt"` |
 | 逻辑组合 | `a > 1 && (b == "x" \|\| c == "y")` |
 | 数组包含 | `ARRAY_CONTAINS(tags, "java")` |
 | 判空 | `EXISTS field_name` |
 
 注意：**逻辑与是 `&&`、或是 `\|\|`**（不是 SQL 的 `AND`/`OR`），取 JSON 用下标 `metadata["k"]`。
+
+> `id in [...]` 这一条本项目**真的在用**：增量更新删除某来源的旧片段，走的就是
+> `store.removeAll(ids)` → `delete where id in [...]`。为什么不用 `metadata[...] ==` 删除，见
+> [24-增量更新.md](24-增量更新.md) §4.4。
 
 ---
 
@@ -278,7 +323,7 @@ MySQL 的 `CREATE USER` / `GRANT` / `REVOKE`，Milvus 叫 **RBAC**（角色制�
 
 Milvus 的权限是「动词级」的，常见几个：`CreateCollection`、`DropCollection`、`Insert`、`Delete`、`Search`、`Query`、`Load`、`Flush`。
 
-**本项目没配 DCL**——`application.yml:109-113` 只填了 host/port：
+**本项目没配 DCL**——`application.yml:109-118` 只填了连接信息和两个本地状态文件，没有任何账号：
 
 ```yaml
 milvus:
@@ -286,6 +331,8 @@ milvus:
   port: 19530
   collection-name: level_knowledge
   dimension: 1536
+  collection-meta-file: milvus-current-collection.txt
+  manifest-file: milvus-index-manifest.txt
 ```
 
 默认无鉴权。生产环境应改用 `MilvusEmbeddingStore` builder 的 `username()` / `password()` + 开启 Milvus 的 `authorizationEnabled`。
@@ -343,14 +390,15 @@ MilvusEmbeddingStore store = MilvusEmbeddingStore.builder()
         .collectionName("demo").dimension(1536)
         .metricType(MetricType.IP).indexType(IndexType.FLAT).build();
 // DML
-store.addAll(embeddingModel.embedAll(segments).content(), segments);
+store.addAll(ids, embeddingModel.embedAll(segments).content(), segments);   // 插
+store.removeAll(ids);                                                      // 按主键删
 EmbeddingSearchResult<TextSegment> r = store.search(
         EmbeddingSearchRequest.builder()
                 .queryEmbedding(embeddingModel.embed("Java后端开发").content())
-                .maxResults(3).minScore(0.2).build());
+                .maxResults(20).minScore(0.2).build());
 ```
 
-对照结论：**框架把 DDL + insert + search 三件事都简化成了一行 Java**，代价是你失去了对 schema、索引参数、标量查询的完全控制。
+对照结论：**框架把 DDL + insert + delete + search 四件事都简化成了一段 Java**，代价是你失去了对 schema、索引参数、标量查询的完全控制。
 
 ---
 
@@ -358,12 +406,16 @@ EmbeddingSearchResult<TextSegment> r = store.search(
 
 | 需求 | 用哪一层 | 本项目实例 |
 |------|---------|-----------|
-| 存/取/搜向量、按 id 删 | **LangChain4j** | `store.addAll()` / `store.search()` |
+| 存/取/搜向量、按主键删 | **LangChain4j** | `store.addAll()` / `store.removeAll(ids)` / `store.search()` |
 | 改名/改 schema/加字段 | 原生 DDL（`MilvusServiceClient`） | 未用，改成「新集合名」规避 |
-| 集合统计、load 状态、标量查询 | **原生 SDK** | `countRows()` 用 `getCollectionStatistics` |
+| 集合统计 | **原生 SDK** | **曾经用过**（`countRows()`），现已删除：统计口径不可靠，见 3.4 |
+| 标量查询（纯按条件查） | **原生 SDK** | 业务代码没用；只在排查时手敲 curl（见 4.4） |
 | 人工看数据、临时排查 | **Attu / milvus_cli** | 未用 |
 
-**判据**：`EmbeddingStore` 接口有的（add/search/remove）就用框架；接口没有的（统计、schema、query）就 new 一个 `MilvusServiceClient` 走原生。本项目 `RagIndexService` 两种都用了，是最好的例子。
+**判据**：`EmbeddingStore` 接口有的（add/addAll/remove/removeAll/search）就用框架；
+接口没有的（统计、schema、纯 query）才 new 一个 `MilvusServiceClient` 走原生 ——
+但动手前先过一遍「框架没提供，会不会是因为这件事本来就不该做」：
+`countRows` 就是这么补出来的，补完才发现它的统计口径根本不可靠（见 3.4）。
 
 ---
 
@@ -371,20 +423,29 @@ EmbeddingSearchResult<TextSegment> r = store.search(
 
 | 操作 | 类别 | 代码位置 | 走的层 |
 |------|------|---------|--------|
-| 建集合 + 索引 + load | DDL | `RagIndexService.java:110-121` | LangChain4j 自动 |
-| 查行数（判空） | DDL | `RagIndexService.java:142-161` | **原生 SDK** |
-| 入库 | DML-insert | `RagIndexService.java:123-127` | LangChain4j `addAll` |
-| 向量检索 | DML-search | `KnowledgeService.java:42-48` | LangChain4j `search` |
-| 切集合引用（类 rebuild） | 应用层 | `RagIndexService.java:95-104` | 纯 Java |
-| 建索引接口 | DDL 触发 | `RagIndexController.java:28-37` | LangChain4j 自动 |
+| 建集合 + 索引 + load | DDL | `RagIndexService.java:416-428` | LangChain4j 自动 |
+| 入库（全量 / 新集合） | DML-insert | `RagIndexService.java:430-440`（`ingestAll`） | LangChain4j `addAll` |
+| 删某来源的旧片段 | DML-delete | `RagIndexService.java:369-374`（`deleteSource`） | LangChain4j `removeAll(ids)` |
+| 向量检索 | DML-search | `KnowledgeService.java:209-229`（`vectorRecall`） | LangChain4j `search` |
+| 切集合引用（全量重建成功后） | 应用层 | `RagIndexService.java:276-277` | 纯 Java |
+| 重建接口 | DDL 触发 | `RagIndexController.java:35-42` | LangChain4j 自动 |
+
+> 全量重建与增量更新共用的「执行层」是同一套：`ingestAll`（插）和 `deleteSource`（删）。
+> 区别只在「对哪些来源做」以及「新建集合还是原地改」，见 [24-增量更新.md](24-增量更新.md) §四。
 
 ---
 
 ## 一句话总结
 
 > **Milvus 没有 SQL，但有 DDL/DML/DCL 三类操作，入口是 REST v2 / gRPC SDK / CLI / GUI。**
-> **LangChain4j 的 `MilvusEmbeddingStore` = 一个「固定 4 字段 schema + 自动建索引 + add/search/remove」的高级封装**，相当于 MyBatis-Plus 之于 MySQL——常用操作一行搞定，但想改表结构、写复杂过滤、查统计时，就得绕过它用原生 `MilvusServiceClient`（本项目 `countRows` 就是这么干的）。
+> **LangChain4j 的 `MilvusEmbeddingStore` = 一个「固定 4 字段 schema + 自动建索引 + addAll/removeAll/search」的高级封装**，
+> 相当于 MyBatis-Plus 之于 MySQL——常用操作一行搞定，代价是表结构和过滤方式都被框住。
+>
+> 本项目现在**一处原生调用都没有**：曾经为了查行数回退过原生 SDK（`countRows`），
+> 后来发现那个统计口径根本不可靠（只算已 flush 的数据），**删掉了**，改用自己写的清单文件。
+> 增量的「删旧片段 + 插新片段」也全部落在框架接口里（`removeAll(ids)` + `addAll(...)`）。
 
 ---
 
-参考：`15-Milvus向量库企业级改造.md`（部署与踩坑）、`16-向量查询流程解析.md`（检索链路逐行）。
+参考：`15-Milvus向量库企业级改造.md`（部署与踩坑）、`16-向量查询流程解析.md`（检索基础盘）、
+`23-检索链路与配置总览.md`（当前完整检索链）、`24-增量更新.md`（增量的请求级细节）。
