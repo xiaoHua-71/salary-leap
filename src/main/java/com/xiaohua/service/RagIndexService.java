@@ -114,7 +114,7 @@ public class RagIndexService {
     private String manifestFilePath;
 
     /** 当前生效的集合名 */
-    private volatile String currentCollectionName;
+    private volatile String currentCollectionName;// volatile修饰，线程直接可见
 
     /** 当前生效的向量库 */
     private volatile MilvusEmbeddingStore embeddingStore;

@@ -131,23 +131,30 @@ public class RagEvalService {
         long start = System.currentTimeMillis();
         String runId = reportWriter.newRunId();
         try {
+            // 1. 加载评估集，挑出本次要跑的用例（enabled 过滤 + caseIds 过滤）
             EvalSet evalSet = evalSetLoader.load();
             List<EvalCase> cases = selectCases(evalSet, caseIds);
 
-            RetrieveOptions base = knowledgeService.defaultOptions();
-            Set<String> indexSources = ragIndexService.currentSources();
+            // 2. 拍快照：整个评估要几分钟，所有基准必须以「开始这一刻」为准。
+            //    尤其 indexSources —— 若每条用例都实时去取，「不在库」那一列会前后自相矛盾
+            RetrieveOptions base = knowledgeService.defaultOptions();//默认参数，全开
+            Set<String> indexSources = ragIndexService.currentSources();//查询当前索引集合
             String collectionAtStart = ragIndexService.getCurrentCollectionName();
             RagEvalReport previous = reportWriter.loadPrevious(runId);
 
             log.info("开始评估：{} 条用例 × {} 个变体（{}），集合 [{}]",
                     cases.size(), variants.size(), EvalVariant.allIds(), collectionAtStart);
 
+            // 3. 主循环：每个变体跑一遍全量用例。串行不并行 —— 并发会撞 DashScope 限流，
+            //    而且只有串行才能让「第几个变体 / 第几条用例」的进度真实可信
             List<VariantReport> variantReports = new ArrayList<>();
             for (int i = 0; i < variants.size(); i++) {
                 EvalVariant variant = variants.get(i);
                 variantReports.add(runVariant(runId, variant, i, variants.size(), cases, base, indexSources, previous));
             }
 
+            // 4. 收尾校验：评估期间有人调过 /rag/rebuild 的话集合会切换，前后两段测的不是同一个库 ——
+            //    指标照样算得出来，但已经不可比了，必须标出来
             boolean collectionChanged = !String.valueOf(collectionAtStart)
                     .equals(String.valueOf(ragIndexService.getCurrentCollectionName()));
             if (collectionChanged) {
@@ -155,6 +162,8 @@ public class RagEvalService {
                         collectionAtStart, ragIndexService.getCurrentCollectionName());
             }
 
+            // 5. 组装并落盘报告。cacheDisabled 恒为 true：评估走 retrieveSegments，本来就绕开了缓存；
+            //    写进报告是给人核对「这批数字没被变体之间互相命中缓存污染」
             RagEvalReport report = new RagEvalReport(runId, start, System.currentTimeMillis() - start,
                     collectionAtStart, collectionChanged, true, evalSetLoader.getEvalSetFile(),
                     cases.size(), previous == null ? null : previous.runId(), variantReports);
@@ -162,6 +171,8 @@ public class RagEvalService {
             latestReport = report;
             success(reportPath.toString(), start);
         } catch (Exception e) {
+            // 只有整次评估垮掉（加载失败、caseIds 没匹配、组装报告出意外）才到这里。
+            // 单条用例检索失败在 runCase 里就被 catch 掉了，不影响剩下用例的指标
             failed(e, start);
         }
     }
